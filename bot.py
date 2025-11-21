@@ -239,6 +239,58 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_price_and_chart(chat_id, lang, context)
 
 
+async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    lang = get_user_language(user_id)
+
+    p = get_ton_price_usd()
+    if p:
+        await update.message.reply_text(text_price_ok(lang, p))
+    else:
+        await update.message.reply_text(text_price_error(lang))
+
+
+async def chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    lang = get_user_language(user_id)
+
+    info = await update.message.reply_text(text_chart_build(lang))
+
+    try:
+        img = create_ton_chart()
+        await update.message.reply_photo(
+            img,
+            caption="[Binance](https://www.binance.com/referral/earn-together/refer2earn-usdc/claim?hl=en&ref=GRO_28502_1C1WM&utm_source=default)",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        print("Chart error:", e)
+        await update.message.reply_text(text_chart_error(lang))
+    finally:
+        try:
+            await info.delete()
+        except:
+            pass
+
+
+# ----------- ДОБАВЛЕНИЕ КНОПОК В ФУТЕР -----------
+async def footer_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [
+            InlineKeyboardButton("Курс", callback_data="price"),
+            InlineKeyboardButton("График", callback_data="chart"),
+        ],
+        [
+            InlineKeyboardButton("Уведомления", callback_data="notifications"),
+            InlineKeyboardButton("Купить Toncoins", callback_data="buy_stars"),
+        ]
+    ]
+    await update.message.reply_text(
+        "Выберите действие:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+
+
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN не задан в переменных окружения")
@@ -247,6 +299,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
+    app.add_handler(MessageHandler(filters.TEXT, footer_buttons))
 
     print("TONMETRIC BOT started")
     app.run_polling()
