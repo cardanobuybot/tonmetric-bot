@@ -8,8 +8,17 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
+from telegram import (
+    Update,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+)
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    CallbackQueryHandler,
+)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
@@ -18,62 +27,62 @@ BINANCE_TICKER = "https://api.binance.com/api/v3/ticker/price"
 BINANCE_KLINES = "https://api.binance.com/api/v3/klines"
 SYMBOL = "TONUSDT"
 
-# Память языков пользователей (пока в оперативке)
+# Храним язык пользователя в памяти
 user_lang = {}  # user_id -> 'ru' | 'en' | 'uk'
 
 
-# ---------- ВСПОМОГАТЕЛЬНЫЕ ТЕКСТЫ ----------
+# ------------------ ТЕКСТЫ ------------------
 
-def get_user_lang(user_id):
+def get_user_language(user_id):
     return user_lang.get(user_id, "ru")
 
 
-def text_lang_confirm(lang_code):
-    if lang_code == "en":
+def text_lang_confirm(lang):
+    if lang == "en":
         return "Language: English ✅\nLoading TON price and chart…"
-    elif lang_code == "uk":
+    elif lang == "uk":
         return "Мова: Українська ✅\nЗавантажую курс та графік TON…"
     else:
         return "Язык: Русский ✅\nЗагружаю курс и график TON…"
 
 
-def text_price_ok(lang_code, price):
-    if lang_code == "en":
-        return f"1 TON = {price:.3f} $ (Binance)"
-    elif lang_code == "uk":
-        return f"1 TON = {price:.3f} $ (Binance)"
+def text_price_ok(lang, price):
+    if lang == "en":
+        return f"1 TON = {price:.3f} $"
+    elif lang == "uk":
+        return f"1 TON = {price:.3f} $"
     else:
-        return f"1 TON = {price:.3f} $ (Binance)"
+        return f"1 TON = {price:.3f} $"
 
 
-def text_price_error(lang_code):
-    if lang_code == "en":
-        return "Can't get TON price now, try again later 🙈"
-    elif lang_code == "uk":
-        return "Не можу отримати курс TON, спробуйте пізніше 🙈"
+def text_price_error(lang):
+    if lang == "en":
+        return "Can't get TON price now 🙈"
+    elif lang == "uk":
+        return "Не можу отримати курс TON 🙈"
     else:
-        return "Не могу получить курс TON, попробуйте позже 🙈"
+        return "Не могу получить курс TON 🙈"
 
 
-def text_chart_building(lang_code):
-    if lang_code == "en":
+def text_chart_build(lang):
+    if lang == "en":
         return "Building TON chart… 📈"
-    elif lang_code == "uk":
+    elif lang == "uk":
         return "Будую графік TON… 📈"
     else:
         return "Строю график TON… 📈"
 
 
-def text_chart_error(lang_code):
-    if lang_code == "en":
-        return "Failed to build chart, try again later 🙈"
-    elif lang_code == "uk":
-        return "Не вдалося побудувати графік, спробуйте пізніше 🙈"
+def text_chart_error(lang):
+    if lang == "en":
+        return "Can't build chart 🙈"
+    elif lang == "uk":
+        return "Не вдалося побудувати графік 🙈"
     else:
-        return "Не удалось построить график, попробуйте позже 🙈"
+        return "Не удалось построить график 🙈"
 
 
-# ---------- ДАННЫЕ ----------
+# ------------------ ДАННЫЕ ------------------
 
 def get_ton_price_usd():
     try:
@@ -99,17 +108,10 @@ def get_ton_history(hours=72):
 
         klines = r.json()
         if not isinstance(klines, list):
-            print("Binance error:", klines)
             return [], []
 
-        times = []
-        prices = []
-
-        for k in klines:
-            t = datetime.fromtimestamp(k[0] / 1000)
-            price = float(k[4])  # close
-            times.append(t)
-            prices.append(price)
+        times = [datetime.fromtimestamp(k[0] / 1000) for k in klines]
+        prices = [float(k[4]) for k in klines]
 
         return times, prices
 
@@ -118,7 +120,7 @@ def get_ton_history(hours=72):
         return [], []
 
 
-# ---------- ГРАФИК ----------
+# ------------------ ГРАФИК ------------------
 
 def create_ton_chart():
     times, prices = get_ton_history(72)
@@ -129,15 +131,14 @@ def create_ton_chart():
 
     plt.style.use("default")
 
-    # большой синий график
     fig, ax = plt.subplots(figsize=(9, 6), dpi=250)
 
     # фон
     fig.patch.set_facecolor("#FFFFFF")
-    ax.set_facecolor("#F5FAFF")  # светло-голубой фон
+    ax.set_facecolor("#F5FAFF")
 
     # линия + заливка
-    line_color = "#3B82F6"  # синий
+    line_color = "#3B82F6"
     ax.plot(times, prices, linewidth=2.3, color=line_color)
     ax.fill_between(times, prices, min(prices), color=line_color, alpha=0.22)
 
@@ -153,50 +154,56 @@ def create_ton_chart():
     ax.tick_params(axis="x", colors="#6B7280", labelsize=8)
     ax.tick_params(axis="y", colors="#6B7280", labelsize=8)
 
-    # заголовок
-    ax.set_title(
-        "TONCOIN:USDT     1 TON = {:.3f} $".format(current_price),
-        color="#111827",
+    # 🔥 вставляем цену СНИЗУ графика
+    fig.text(
+        0.01,
+        -0.04,
+        f"1 TON = {current_price:.3f} $",
         fontsize=12,
-        loc="left",
-        pad=10,
+        color="#111827",
+        ha="left",
     )
 
     fig.tight_layout(pad=1.5)
 
     buf = io.BytesIO()
-    plt.savefig(buf, format="png")
+    plt.savefig(buf, format="png", bbox_inches="tight")
     plt.close()
     buf.seek(0)
     return buf.getvalue()
 
 
-# ---------- ОБЩАЯ ФУНКЦИЯ: КУРС + ГРАФИК ----------
+# ----------- ОТПРАВКА ЦЕНЫ + ГРАФИКА ------------
 
-async def send_price_and_chart(chat_id, lang_code, context: ContextTypes.DEFAULT_TYPE):
+async def send_price_and_chart(chat_id, lang, context):
     price = get_ton_price_usd()
     if price is None:
-        await context.bot.send_message(chat_id, text_price_error(lang_code))
+        await context.bot.send_message(chat_id, text_price_error(lang))
         return
 
-    # текст с курсом
-    await context.bot.send_message(chat_id, text_price_ok(lang_code, price))
+    # отправляем цену
+    await context.bot.send_message(chat_id, text_price_ok(lang, price))
 
-    # график
+    # отправляем график с реф-ссылкой
     try:
         img = create_ton_chart()
-        await context.bot.send_photo(chat_id, img)
+        await context.bot.send_photo(
+            chat_id,
+            img,
+            caption="[Binance](https://www.binance.com/referral/earn-together/refer2earn-usdc/claim?hl=en&ref=GRO_28502_1C1WM&utm_source=default)",
+            parse_mode="Markdown",
+        )
     except Exception as e:
         print("Chart error:", e)
-        await context.bot.send_message(chat_id, text_chart_error(lang_code))
+        await context.bot.send_message(chat_id, text_chart_error(lang))
 
 
-# ---------- ХЕНДЛЕРЫ ----------
+# ------------------ ХЕНДЛЕРЫ ------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    user_lang[user_id] = "ru"
 
-    # клавиатура выбора языка
     keyboard = [
         [
             InlineKeyboardButton("English", callback_data="lang_en"),
@@ -204,8 +211,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("Українська", callback_data="lang_uk"),
         ]
     ]
-
-    user_lang[user_id] = "ru"  # по умолчанию русский
 
     await update.message.reply_text(
         "Выберите язык / Select language / Оберіть мову:",
@@ -217,48 +222,53 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    data = query.data
     user_id = query.from_user.id
     chat_id = query.message.chat_id
 
+    data = query.data
+
     if data.startswith("lang_"):
-        lang_code = data.split("_", 1)[1]  # en / ru / uk
-        user_lang[user_id] = lang_code
+        lang = data.split("_", 1)[1]  # en / ru / uk
+        user_lang[user_id] = lang
 
-        # подтверждаем язык
-        confirm_text = text_lang_confirm(lang_code)
-        await query.message.reply_text(confirm_text)
+        # подтверждение языка
+        await query.message.reply_text(text_lang_confirm(lang))
 
-        # сразу отправляем курс + график
-        await send_price_and_chart(chat_id, lang_code, context)
+        # сразу курс + график
+        await send_price_and_chart(chat_id, lang, context)
 
 
 async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    lang_code = get_user_lang(user_id)
+    lang = get_user_language(user_id)
 
     p = get_ton_price_usd()
     if p:
-        await update.message.reply_text(text_price_ok(lang_code, p))
+        await update.message.reply_text(text_price_ok(lang, p))
     else:
-        await update.message.reply_text(text_price_error(lang_code))
+        await update.message.reply_text(text_price_error(lang))
 
 
 async def chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    lang_code = get_user_lang(user_id)
+    lang = get_user_language(user_id)
 
-    info = await update.message.reply_text(text_chart_building(lang_code))
+    info = await update.message.reply_text(text_chart_build(lang))
+
     try:
         img = create_ton_chart()
-        await update.message.reply_photo(img)
+        await update.message.reply_photo(
+            img,
+            caption="[Binance](https://www.binance.com/referral/earn-together/refer2earn-usdc/claim?hl=en&ref=GRO_28502_1C1WM&utm_source=default)",
+            parse_mode="Markdown",
+        )
     except Exception as e:
         print("Chart error:", e)
-        await update.message.reply_text(text_chart_error(lang_code))
+        await update.message.reply_text(text_chart_error(lang))
     finally:
         try:
             await info.delete()
-        except Exception:
+        except:
             pass
 
 
