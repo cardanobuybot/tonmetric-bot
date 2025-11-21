@@ -8,8 +8,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
@@ -18,8 +18,78 @@ BINANCE_TICKER = "https://api.binance.com/api/v3/ticker/price"
 BINANCE_KLINES = "https://api.binance.com/api/v3/klines"
 SYMBOL = "TONUSDT"
 
+# Память языков пользователей (пока в оперативке)
+user_lang = {}  # user_id -> 'ru' | 'en' | 'uk'
 
-# --- PRICE ---
+
+# ---------- ВСПОМОГАТЕЛЬНЫЕ ТЕКСТЫ ----------
+
+def get_user_lang(user_id):
+    return user_lang.get(user_id, "ru")
+
+
+def text_after_lang(lang_code):
+    if lang_code == "en":
+        return (
+            "Language: English ✅\n\n"
+            "Commands:\n"
+            "/price – TON price\n"
+            "/chart – TON price chart"
+        )
+    elif lang_code == "uk":
+        return (
+            "Мова: Українська ✅\n\n"
+            "Команди:\n"
+            "/price – курс TON\n"
+            "/chart – графік TON"
+        )
+    else:  # ru
+        return (
+            "Язык: Русский ✅\n\n"
+            "Команды:\n"
+            "/price — курс TON\n"
+            "/chart — график TON"
+        )
+
+
+def text_price_ok(lang_code, price):
+    if lang_code == "en":
+        return f"1 TON = {price:.3f} $ (Binance)"
+    elif lang_code == "uk":
+        return f"1 TON = {price:.3f} $ (Binance)"
+    else:
+        return f"1 TON = {price:.3f} $ (Binance)"
+
+
+def text_price_error(lang_code):
+    if lang_code == "en":
+        return "Can't get TON price now, try again later 🙈"
+    elif lang_code == "uk":
+        return "Не можу отримати курс TON, спробуйте пізніше 🙈"
+    else:
+        return "Не могу получить курс TON, попробуйте позже 🙈"
+
+
+def text_chart_building(lang_code):
+    if lang_code == "en":
+        return "Building TON chart… 📈"
+    elif lang_code == "uk":
+        return "Будую графік TON… 📈"
+    else:
+        return "Строю график TON… 📈"
+
+
+def text_chart_error(lang_code):
+    if lang_code == "en":
+        return "Failed to build chart, try again later 🙈"
+    elif lang_code == "uk":
+        return "Не вдалося побудувати графік, спробуйте пізніше 🙈"
+    else:
+        return "Не удалось построить график, попробуйте позже 🙈"
+
+
+# ---------- ДАННЫЕ ----------
+
 def get_ton_price_usd():
     try:
         r = requests.get(BINANCE_TICKER, params={"symbol": SYMBOL}, timeout=8)
@@ -30,8 +100,7 @@ def get_ton_price_usd():
         return None
 
 
-# --- CHART DATA ---
-def get_ton_history(hours: int = 72):
+def get_ton_history(hours=72):
     try:
         r = requests.get(
             BINANCE_KLINES,
@@ -64,8 +133,9 @@ def get_ton_history(hours: int = 72):
         return [], []
 
 
-# --- CHART (НОВАЯ СИНЯЯ ВЕРСИЯ) ---
-def create_ton_chart() -> bytes:
+# ---------- ГРАФИК ----------
+
+def create_ton_chart():
     times, prices = get_ton_history(72)
     if not times or not prices:
         raise RuntimeError("No chart data")
@@ -73,8 +143,8 @@ def create_ton_chart() -> bytes:
     current_price = prices[-1]
 
     plt.style.use("default")
-    
-    # БОЛЬШОЙ СИНИЙ ГРАФИК
+
+    # большой синий график
     fig, ax = plt.subplots(figsize=(9, 6), dpi=250)
 
     # фон
@@ -100,7 +170,7 @@ def create_ton_chart() -> bytes:
 
     # заголовок
     ax.set_title(
-        f"TONCOIN:USDT     1 TON = {current_price:.3f} $",
+        "TONCOIN:USDT     1 TON = {:.3f} $".format(current_price),
         color="#111827",
         fontsize=12,
         loc="left",
@@ -116,46 +186,84 @@ def create_ton_chart() -> bytes:
     return buf.getvalue()
 
 
-# --- HANDLERS ---
+# ---------- ХЕНДЛЕРЫ ----------
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+
+    # клавиатура выбора языка
+    keyboard = [
+        [
+            InlineKeyboardButton("English", callback_data="lang_en"),
+            InlineKeyboardButton("Русский", callback_data="lang_ru"),
+            InlineKeyboardButton("Українська", callback_data="lang_uk"),
+        ]
+    ]
+
+    user_lang[user_id] = "ru"  # по умолчанию русский
+
     await update.message.reply_text(
-        "Привет! Я TONMETRIC BOT.\n"
-        "/price — курс TON\n"
-        "/chart — график TON (Binance API)"
+        "Выберите язык / Select language / Оберіть мову:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+    user_id = query.from_user.id
+
+    if data.startswith("lang_"):
+        lang_code = data.split("_", 1)[1]  # en / ru / uk
+        user_lang[user_id] = lang_code
+
+        msg = text_after_lang(lang_code)
+        await query.message.reply_text(msg)
+
+
 async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    lang_code = get_user_lang(user_id)
+
     p = get_ton_price_usd()
     if p:
-        await update.message.reply_text(f"1 TON = {p:.3f} $ (Binance)")
+        await update.message.reply_text(text_price_ok(lang_code, p))
     else:
-        await update.message.reply_text("Не могу получить курс TON")
+        await update.message.reply_text(text_price_error(lang_code))
 
 
 async def chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    info = await update.message.reply_text("Строю график…")
+    user_id = update.effective_user.id
+    lang_code = get_user_lang(user_id)
+
+    info = await update.message.reply_text(text_chart_building(lang_code))
     try:
         img = create_ton_chart()
         await update.message.reply_photo(img)
     except Exception as e:
         print("Chart error:", e)
-        await update.message.reply_text("Не удалось построить график")
+        await update.message.reply_text(text_chart_error(lang_code))
     finally:
         try:
             await info.delete()
-        except:
+        except Exception:
             pass
 
 
 def main():
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN не задан в переменных окружения")
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("price", price))
     app.add_handler(CommandHandler("chart", chart))
+    app.add_handler(CallbackQueryHandler(button))
 
-    print("BOT STARTED")
+    print("TONMETRIC BOT started")
     app.run_polling()
 
 
