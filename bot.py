@@ -12,14 +12,15 @@ from telegram import (
     Update,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    ReplyKeyboardMarkup,
-    KeyboardButton
+    ReplyKeyboardMarkup,  # Импортируем для добавления кнопок внизу
 )
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     ContextTypes,
     CallbackQueryHandler,
+    MessageHandler,  # Импортируем MessageHandler
+    filters  # Для фильтрации текстовых сообщений
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -200,18 +201,6 @@ async def send_price_and_chart(chat_id, lang, context):
         await context.bot.send_message(chat_id, text_chart_error(lang))
 
 
-# ------------------ КНОПКИ ------------------
-
-def footer_buttons():
-    keyboard = [
-        [KeyboardButton("Курс")],
-        [KeyboardButton("График")],
-        [KeyboardButton("Уведомления")],
-        [KeyboardButton("Купить Stars")]
-    ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-
-
 # ------------------ ХЕНДЛЕРЫ ------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -286,25 +275,6 @@ async def chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 
-async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    lang = get_user_language(user_id)
-
-    if update.message.text == "Курс":
-        await price(update, context)
-    elif update.message.text == "График":
-        await chart(update, context)
-    elif update.message.text == "Уведомления":
-        await update.message.reply_text("Настройки уведомлений")
-    elif update.message.text == "Купить Stars":
-        await update.message.reply_text("Переходите на [tonstars.io](https://tonstars.io/)")
-
-    await update.message.reply_text(
-        "Выберите действие:",
-        reply_markup=footer_buttons(),
-    )
-
-
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN не задан в переменных окружения")
@@ -315,7 +285,6 @@ def main():
     app.add_handler(CommandHandler("price", price))
     app.add_handler(CommandHandler("chart", chart))
     app.add_handler(CallbackQueryHandler(button))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, footer_buttons_handler))
 
     print("TONMETRIC BOT started")
     app.run_polling()
