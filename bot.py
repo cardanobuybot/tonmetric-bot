@@ -1,7 +1,195 @@
 from datetime import datetime
 import os
 import logging
+import requestsimport os
+import io
+from datetime import datetime
 import requests
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+from telegram import (
+    Update,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    ReplyKeyboardMarkup,
+    KeyboardButton
+)
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    CallbackQueryHandler,
+    filters
+)
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+BINANCE_TICKER = "https://api.binance.com/api/v3/ticker/price"
+BINANCE_KLINES = "https://api.binance.com/api/v3/klines"
+SYMBOL = "TONUSDT"
+user_lang = {}
+
+def get_user_language(user_id):
+    return user_lang.get(user_id, "ru")
+
+def text_lang_confirm(lang):
+    if lang == "en":
+        return "Language: English ✅\nLoading TON price and chart…"
+    elif lang == "uk":
+        return "Мова: Українська ✅\nЗавантажую курс та графік TON…"
+    else:
+        return "Язык: Русский ✅\nЗагружаю курс и график TON…"
+
+def text_price_ok(lang, price):
+    return f"1 TON = {price:.3f} $"
+
+def text_price_error(lang):
+    return {
+        "en": "Can't get TON price now 🙈",
+        "uk": "Не можу отримати курс TON 🙈",
+        "ru": "Не могу получить курс TON 🙈"
+    }.get(lang, "Error")
+
+def text_chart_build(lang):
+    return {
+        "en": "Building TON chart… 📈",
+        "uk": "Будую графік TON… 📈",
+        "ru": "Строю график TON… 📈"
+    }.get(lang, "…")
+
+def text_chart_error(lang):
+    return {
+        "en": "Can't build chart 🙈",
+        "uk": "Не вдалося побудувати графік 🙈",
+        "ru": "Не удалось построить график 🙈"
+    }.get(lang, "…")
+
+def get_ton_price_usd():
+    try:
+        r = requests.get(BINANCE_TICKER, params={"symbol": SYMBOL}, timeout=8)
+        return float(r.json()["price"])
+    except Exception as e:
+        print("Price error:", e)
+        return None
+
+def get_ton_history(hours=72):
+    try:
+        r = requests.get(BINANCE_KLINES, params={"symbol": SYMBOL, "interval": "1h", "limit": hours}, timeout=10)
+        klines = r.json()
+        if not isinstance(klines, list): return [], []
+        times = [datetime.fromtimestamp(k[0] / 1000) for k in klines]
+        prices = [float(k[4]) for k in klines]
+        return times, prices
+    except Exception as e:
+        print("History error:", e)
+        return [], []
+
+def create_ton_chart():
+    times, prices = get_ton_history(72)
+    if not times or not prices:
+        raise RuntimeError("No chart data")
+    current_price = prices[-1]
+    fig, ax = plt.subplots(figsize=(9, 6), dpi=250)
+    fig.patch.set_facecolor("#FFFFFF")
+    ax.set_facecolor("#F5FAFF")
+    ax.plot(times, prices, linewidth=2.3, color="#3B82F6")
+    ax.fill_between(times, prices, min(prices), color="#3B82F6", alpha=0.22)
+    ax.grid(True, linewidth=0.3, alpha=0.25)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["bottom"].set_color("#D0D7E2")
+    ax.spines["left"].set_color("#D0D7E2")
+    ax.tick_params(axis="x", colors="#6B7280", labelsize=8)
+    ax.tick_params(axis="y", colors="#6B7280", labelsize=8)
+    fig.text(0.01, -0.04, f"1 TON = {current_price:.3f} $", fontsize=12, color="#111827", ha="left")
+    fig.tight_layout(pad=1.5)
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", bbox_inches="tight")
+    plt.close()
+    buf.seek(0)
+    return buf.getvalue()
+
+def footer_buttons(lang):
+    labels = {
+        "en": ["Price", "Chart", "Notifications", "Buy Stars"],
+        "ru": ["Курс", "График", "Уведомления", "Купить Stars"],
+        "uk": ["Курс", "Графік", "Сповіщення", "Купити Stars"],
+    }.get(lang, ["Курс", "График", "Уведомления", "Купить Stars"])
+    return ReplyKeyboardMarkup([[KeyboardButton(lbl)] for lbl in labels], resize_keyboard=True)
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    keyboard = [[
+        InlineKeyboardButton("English", callback_data="lang_en"),
+        InlineKeyboardButton("Русский", callback_data="lang_ru"),
+        InlineKeyboardButton("Українська", callback_data="lang_uk")
+    ]]
+    await update.message.reply_text(
+        "Выберите язык / Select language / Оберіть мову:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    lang_code = query.data.split("_")[1]
+    user_lang[user_id] = lang_code
+    await query.message.reply_text(text_lang_confirm(lang_code), reply_markup=footer_buttons(lang_code))
+    await send_price_and_chart(query.message.chat_id, lang_code, context)
+
+async def send_price_and_chart(chat_id, lang, context):
+    price = get_ton_price_usd()
+    if price is None:
+        await context.bot.send_message(chat_id, text_price_error(lang))
+    else:
+        await context.bot.send_message(chat_id, text_price_ok(lang, price))
+        try:
+            img = create_ton_chart()
+            await context.bot.send_photo(
+                chat_id,
+                img,
+                caption="[Binance](https://www.binance.com/referral/earn-together/refer2earn-usdc/claim?hl=en&ref=GRO_28502_1C1WM&utm_source=default)",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            print("Chart error:", e)
+            await context.bot.send_message(chat_id, text_chart_error(lang))
+
+async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    lang = get_user_language(user_id)
+    msg = update.message.text.lower()
+    if "курс" in msg or "price" in msg:
+        await update.message.reply_text(text_price_ok(lang, get_ton_price_usd()))
+    elif "график" in msg or "chart" in msg:
+        msg_wait = await update.message.reply_text(text_chart_build(lang))
+        try:
+            img = create_ton_chart()
+            await update.message.reply_photo(
+                img,
+                caption="[Binance](https://www.binance.com/referral/earn-together/refer2earn-usdc/claim?hl=en&ref=GRO_28502_1C1WM&utm_source=default)",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            await update.message.reply_text(text_chart_error(lang))
+        finally:
+            await msg_wait.delete()
+    elif "stars" in msg:
+        await update.message.reply_text("https://tonstars.io")
+
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, footer_buttons_handler))
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
+
 import json
 from io import BytesIO
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup
