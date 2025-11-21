@@ -17,6 +17,8 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     CallbackQueryHandler,
+    MessageHandler,
+    filters,
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -205,17 +207,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         [
-            InlineKeyboardButton("Курс", callback_data="price"),
-            InlineKeyboardButton("Уведомления", callback_data="notifications"),
-        ],
-        [
-            InlineKeyboardButton("График", callback_data="chart"),
-            InlineKeyboardButton("Купить Stars", callback_data="buy_stars"),
+            InlineKeyboardButton("English", callback_data="lang_en"),
+            InlineKeyboardButton("Русский", callback_data="lang_ru"),
+            InlineKeyboardButton("Українська", callback_data="lang_uk"),
         ]
     ]
 
     await update.message.reply_text(
-        "Выберите действие:",
+        "Выберите язык / Select language / Оберіть мову:",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
@@ -229,19 +228,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data
 
-    if data == "price":
-        lang = get_user_language(user_id)
+    if data.startswith("lang_"):
+        lang = data.split("_", 1)[1]  # en / ru / uk
+        user_lang[user_id] = lang
+
+        # подтверждение языка
+        await query.message.reply_text(text_lang_confirm(lang))
+
+        # сразу курс + график
         await send_price_and_chart(chat_id, lang, context)
-
-    elif data == "chart":
-        lang = get_user_language(user_id)
-        await send_price_and_chart(chat_id, lang, context)
-
-    elif data == "buy_stars":
-        await query.message.reply_text("Скоро будет доступно… 🔜")
-
-    else:
-        await query.message.reply_text("Неизвестная команда!")
 
 
 def main():
