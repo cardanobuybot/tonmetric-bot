@@ -28,28 +28,13 @@ def get_user_lang(user_id):
     return user_lang.get(user_id, "ru")
 
 
-def text_after_lang(lang_code):
+def text_lang_confirm(lang_code):
     if lang_code == "en":
-        return (
-            "Language: English ✅\n\n"
-            "Commands:\n"
-            "/price – TON price\n"
-            "/chart – TON price chart"
-        )
+        return "Language: English ✅\nLoading TON price and chart…"
     elif lang_code == "uk":
-        return (
-            "Мова: Українська ✅\n\n"
-            "Команди:\n"
-            "/price – курс TON\n"
-            "/chart – графік TON"
-        )
-    else:  # ru
-        return (
-            "Язык: Русский ✅\n\n"
-            "Команды:\n"
-            "/price — курс TON\n"
-            "/chart — график TON"
-        )
+        return "Мова: Українська ✅\nЗавантажую курс та графік TON…"
+    else:
+        return "Язык: Русский ✅\nЗагружаю курс и график TON…"
 
 
 def text_price_ok(lang_code, price):
@@ -186,6 +171,26 @@ def create_ton_chart():
     return buf.getvalue()
 
 
+# ---------- ОБЩАЯ ФУНКЦИЯ: КУРС + ГРАФИК ----------
+
+async def send_price_and_chart(chat_id, lang_code, context: ContextTypes.DEFAULT_TYPE):
+    price = get_ton_price_usd()
+    if price is None:
+        await context.bot.send_message(chat_id, text_price_error(lang_code))
+        return
+
+    # текст с курсом
+    await context.bot.send_message(chat_id, text_price_ok(lang_code, price))
+
+    # график
+    try:
+        img = create_ton_chart()
+        await context.bot.send_photo(chat_id, img)
+    except Exception as e:
+        print("Chart error:", e)
+        await context.bot.send_message(chat_id, text_chart_error(lang_code))
+
+
 # ---------- ХЕНДЛЕРЫ ----------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -214,13 +219,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data
     user_id = query.from_user.id
+    chat_id = query.message.chat_id
 
     if data.startswith("lang_"):
         lang_code = data.split("_", 1)[1]  # en / ru / uk
         user_lang[user_id] = lang_code
 
-        msg = text_after_lang(lang_code)
-        await query.message.reply_text(msg)
+        # подтверждаем язык
+        confirm_text = text_lang_confirm(lang_code)
+        await query.message.reply_text(confirm_text)
+
+        # сразу отправляем курс + график
+        await send_price_and_chart(chat_id, lang_code, context)
 
 
 async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
