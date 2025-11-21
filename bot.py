@@ -1,10 +1,13 @@
 import os
 import io
 from datetime import datetime
+
 import requests
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
 from telegram import (
     Update,
     InlineKeyboardMarkup,
@@ -208,53 +211,46 @@ def footer_buttons():
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
+
 # ------------------ ХЕНДЛЕРЫ ------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_lang[user_id] = "ru"
 
-    # Отправляем сообщение с клавиатурой
+    keyboard = [
+        [
+            InlineKeyboardButton("English", callback_data="lang_en"),
+            InlineKeyboardButton("Русский", callback_data="lang_ru"),
+            InlineKeyboardButton("Українська", callback_data="lang_uk"),
+        ]
+    ]
+
     await update.message.reply_text(
-        "Привет! Я TONMETRIC BOT. Выберите действие:",
-        reply_markup=footer_buttons(),  # закрепляем клавиатуру с кнопками
+        "Выберите язык / Select language / Оберіть мову:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    lang = get_user_language(user_id)
+    query = update.callback_query
+    await query.answer()
 
-    # Кнопки, которые отвечают на команды
-    if update.message.text == "Курс":
-        p = get_ton_price_usd()
-        if p:
-            await update.message.reply_text(f"1 TON = {p:.3f} $")
-        else:
-            await update.message.reply_text("Не могу получить курс TON")
-    elif update.message.text == "График":
-        info = await update.message.reply_text("Строю график… 📈")
-        try:
-            img = create_ton_chart()
-            await update.message.reply_photo(
-                img,
-                caption="[Binance](https://www.binance.com/referral/earn-together/refer2earn-usdc/claim?hl=en&ref=GRO_28502_1C1WM&utm_source=default)",
-                parse_mode="Markdown",
-            )
-        except Exception as e:
-            print("Chart error:", e)
-            await update.message.reply_text("Не удалось построить график")
-        finally:
-            try:
-                await info.delete()
-            except:
-                pass
-    elif update.message.text == "Уведомления":
-        # Логика уведомлений
-        await update.message.reply_text("Настройки уведомлений")
-    elif update.message.text == "Купить Stars":
-        # Логика перехода на сайт TONStars
-        await update.message.reply_text("Переходите на [tonstars.io](https://tonstars.io/)")
+    user_id = query.from_user.id
+    chat_id = query.message.chat_id
+
+    data = query.data
+
+    if data.startswith("lang_"):
+        lang = data.split("_", 1)[1]  # en / ru / uk
+        user_lang[user_id] = lang
+
+        # подтверждение языка
+        await query.message.reply_text(text_lang_confirm(lang))
+
+        # сразу курс + график
+        await send_price_and_chart(chat_id, lang, context)
+
 
 async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -290,6 +286,25 @@ async def chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 
+async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    lang = get_user_language(user_id)
+
+    if update.message.text == "Курс":
+        await price(update, context)
+    elif update.message.text == "График":
+        await chart(update, context)
+    elif update.message.text == "Уведомления":
+        await update.message.reply_text("Настройки уведомлений")
+    elif update.message.text == "Купить Stars":
+        await update.message.reply_text("Переходите на [tonstars.io](https://tonstars.io/)")
+
+    await update.message.reply_text(
+        "Выберите действие:",
+        reply_markup=footer_buttons(),
+    )
+
+
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN не задан в переменных окружения")
@@ -300,6 +315,7 @@ def main():
     app.add_handler(CommandHandler("price", price))
     app.add_handler(CommandHandler("chart", chart))
     app.add_handler(CallbackQueryHandler(button))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, footer_buttons_handler))
 
     print("TONMETRIC BOT started")
     app.run_polling()
