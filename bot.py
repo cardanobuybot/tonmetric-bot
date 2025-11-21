@@ -1,24 +1,23 @@
 import os
 import io
 from datetime import datetime
+
 import requests
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
 from telegram import (
     Update,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    ReplyKeyboardMarkup,
-    ReplyKeyboardRemove
 )
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     ContextTypes,
     CallbackQueryHandler,
-    MessageHandler,
-    filters
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -28,11 +27,11 @@ BINANCE_TICKER = "https://api.binance.com/api/v3/ticker/price"
 BINANCE_KLINES = "https://api.binance.com/api/v3/klines"
 SYMBOL = "TONUSDT"
 
-# Store the user's language in memory
+# Храним язык пользователя в памяти
 user_lang = {}  # user_id -> 'ru' | 'en' | 'uk'
 
 
-# ------------------ TEXTS ------------------
+# ------------------ ТЕКСТЫ ------------------
 
 def get_user_language(user_id):
     return user_lang.get(user_id, "ru")
@@ -83,7 +82,7 @@ def text_chart_error(lang):
         return "Не удалось построить график 🙈"
 
 
-# ------------------ DATA ------------------
+# ------------------ ДАННЫЕ ------------------
 
 def get_ton_price_usd():
     try:
@@ -121,7 +120,7 @@ def get_ton_history(hours=72):
         return [], []
 
 
-# ------------------ CHART ------------------
+# ------------------ ГРАФИК ------------------
 
 def create_ton_chart():
     times, prices = get_ton_history(72)
@@ -134,19 +133,19 @@ def create_ton_chart():
 
     fig, ax = plt.subplots(figsize=(9, 6), dpi=250)
 
-    # Background
+    # фон
     fig.patch.set_facecolor("#FFFFFF")
     ax.set_facecolor("#F5FAFF")
 
-    # Line + fill
+    # линия + заливка
     line_color = "#3B82F6"
     ax.plot(times, prices, linewidth=2.3, color=line_color)
     ax.fill_between(times, prices, min(prices), color=line_color, alpha=0.22)
 
-    # Grid
+    # сетка
     ax.grid(True, linewidth=0.3, alpha=0.25)
 
-    # Axis styling
+    # оформление осей
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.spines["bottom"].set_color("#D0D7E2")
@@ -155,7 +154,7 @@ def create_ton_chart():
     ax.tick_params(axis="x", colors="#6B7280", labelsize=8)
     ax.tick_params(axis="y", colors="#6B7280", labelsize=8)
 
-    # Insert price at the bottom of the chart
+    # 🔥 вставляем цену СНИЗУ графика
     fig.text(
         0.01,
         -0.04,
@@ -174,7 +173,7 @@ def create_ton_chart():
     return buf.getvalue()
 
 
-# ----------- SEND PRICE + CHART ------------
+# ----------- ОТПРАВКА ЦЕНЫ + ГРАФИКА ------------
 
 async def send_price_and_chart(chat_id, lang, context):
     price = get_ton_price_usd()
@@ -182,10 +181,10 @@ async def send_price_and_chart(chat_id, lang, context):
         await context.bot.send_message(chat_id, text_price_error(lang))
         return
 
-    # Send price
+    # отправляем цену
     await context.bot.send_message(chat_id, text_price_ok(lang, price))
 
-    # Send chart with referral link
+    # отправляем график с реф-ссылкой
     try:
         img = create_ton_chart()
         await context.bot.send_photo(
@@ -199,7 +198,7 @@ async def send_price_and_chart(chat_id, lang, context):
         await context.bot.send_message(chat_id, text_chart_error(lang))
 
 
-# ------------------ HANDLERS ------------------
+# ------------------ ХЕНДЛЕРЫ ------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -213,7 +212,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
     ]
 
-    # Send initial message with language options
     await update.message.reply_text(
         "Выберите язык / Select language / Оберіть мову:",
         reply_markup=InlineKeyboardMarkup(keyboard),
@@ -233,27 +231,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lang = data.split("_", 1)[1]  # en / ru / uk
         user_lang[user_id] = lang
 
-        # Language confirmation
+        # подтверждение языка
         await query.message.reply_text(text_lang_confirm(lang))
 
-        # Send price and chart after language selection
+        # сразу курс + график
         await send_price_and_chart(chat_id, lang, context)
-
-
-# ------------------ FOOTER BUTTONS ------------------
-
-async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    lang = get_user_language(user_id)
-
-    if update.message.text == "Курс":
-        await price(update, context)
-    elif update.message.text == "График":
-        await chart(update, context)
-    elif update.message.text == "Уведомления":
-        await update.message.reply_text("Уведомления еще не настроены.")
-    elif update.message.text == "Купить Stars":
-        await update.message.reply_text("Перейдите на сайт TONStars: https://tonstars.io")
 
 
 async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -300,7 +282,6 @@ def main():
     app.add_handler(CommandHandler("price", price))
     app.add_handler(CommandHandler("chart", chart))
     app.add_handler(CallbackQueryHandler(button))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, footer_buttons_handler))
 
     print("TONMETRIC BOT started")
     app.run_polling()
