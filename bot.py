@@ -1,16 +1,17 @@
 import os
 import io
 from datetime import datetime
+
 import requests
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
 from telegram import (
     Update,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    ReplyKeyboardMarkup,
-    KeyboardButton
 )
 from telegram.ext import (
     ApplicationBuilder,
@@ -197,63 +198,44 @@ async def send_price_and_chart(chat_id, lang, context):
         await context.bot.send_message(chat_id, text_chart_error(lang))
 
 
-# ------------------ КНОПКИ ------------------
-
-def footer_buttons():
-    keyboard = [
-        [KeyboardButton("Курс")],
-        [KeyboardButton("График")],
-        [KeyboardButton("Уведомления")],
-        [KeyboardButton("Купить Toncoins")]
-    ]
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
-
 # ------------------ ХЕНДЛЕРЫ ------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_lang[user_id] = "ru"
 
-    # Отправляем сообщение с клавиатурой
+    keyboard = [
+        [
+            InlineKeyboardButton("English", callback_data="lang_en"),
+            InlineKeyboardButton("Русский", callback_data="lang_ru"),
+            InlineKeyboardButton("Українська", callback_data="lang_uk"),
+        ]
+    ]
+
     await update.message.reply_text(
-        "Привет! Я TONMETRIC BOT. Выберите действие:",
-        reply_markup=footer_buttons(),  # закрепляем клавиатуру с кнопками
+        "Выберите язык / Select language / Оберіть мову:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    lang = get_user_language(user_id)
 
-    # Кнопки, которые отвечают на команды
-    if update.message.text == "Курс":
-        p = get_ton_price_usd()
-        if p:
-            await update.message.reply_text(f"1 TON = {p:.3f} $")
-        else:
-            await update.message.reply_text("Не могу получить курс TON")
-    elif update.message.text == "График":
-        info = await update.message.reply_text("Строю график… 📈")
-        try:
-            img = create_ton_chart()
-            await update.message.reply_photo(
-                img,
-                caption="[Binance](https://www.binance.com/referral/earn-together/refer2earn-usdc/claim?hl=en&ref=GRO_28502_1C1WM&utm_source=default)",
-                parse_mode="Markdown",
-            )
-        except Exception as e:
-            print("Chart error:", e)
-            await update.message.reply_text("Не удалось построить график")
-        finally:
-            try:
-                await info.delete()
-            except:
-                pass
-    elif update.message.text == "Уведомления":
-        # Логика уведомлений
-        await update.message.reply_text("Настройки уведомлений")
-    elif update.message.text == "Купить Toncoins":
-        # Логика покупки
-        await update.message.reply_text("Покупка Toncoins")
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    user_id = query.from_user.id
+    chat_id = query.message.chat_id
+
+    data = query.data
+
+    if data.startswith("lang_"):
+        lang = data.split("_", 1)[1]  # en / ru / uk
+        user_lang[user_id] = lang
+
+        # подтверждение языка
+        await query.message.reply_text(text_lang_confirm(lang))
+
+        # сразу курс + график
+        await send_price_and_chart(chat_id, lang, context)
 
 
 async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
