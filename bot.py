@@ -3,6 +3,7 @@ import io
 from datetime import datetime
 
 import requests
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -17,8 +18,6 @@ from telegram.ext import (
     CommandHandler,
     ContextTypes,
     CallbackQueryHandler,
-    MessageHandler,
-    filters,
 )
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -273,24 +272,6 @@ async def chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 
-# ----------- ДОБАВЛЕНИЕ КНОПОК В ФУТЕР -----------
-async def footer_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [
-            InlineKeyboardButton("Курс", callback_data="price"),
-            InlineKeyboardButton("График", callback_data="chart"),
-        ],
-        [
-            InlineKeyboardButton("Уведомления", callback_data="notifications"),
-            InlineKeyboardButton("Купить Toncoins", callback_data="buy_stars"),
-        ]
-    ]
-    await update.message.reply_text(
-        "Выберите действие:",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
-
-
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN не задан в переменных окружения")
@@ -298,8 +279,9 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("price", price))
+    app.add_handler(CommandHandler("chart", chart))
     app.add_handler(CallbackQueryHandler(button))
-    app.add_handler(MessageHandler(filters.TEXT, footer_buttons))
 
     print("TONMETRIC BOT started")
     app.run_polling()
