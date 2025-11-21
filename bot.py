@@ -64,7 +64,7 @@ def get_ton_history(hours: int = 72):
         return [], []
 
 
-# --- CHART ---
+# --- CHART (НОВАЯ СИНЯЯ ВЕРСИЯ) ---
 def create_ton_chart() -> bytes:
     times, prices = get_ton_history(72)
     if not times or not prices:
@@ -73,34 +73,41 @@ def create_ton_chart() -> bytes:
     current_price = prices[-1]
 
     plt.style.use("default")
-    fig, ax = plt.subplots(figsize=(10, 4), dpi=200)
+    
+    # БОЛЬШОЙ СИНИЙ ГРАФИК
+    fig, ax = plt.subplots(figsize=(9, 6), dpi=250)
 
+    # фон
     fig.patch.set_facecolor("#FFFFFF")
-    ax.set_facecolor("#F8FFFB")
+    ax.set_facecolor("#F5FAFF")  # светло-голубой фон
 
-    line_color = "#8BE3C9"
-    ax.plot(times, prices, linewidth=2, color=line_color)
-    ax.fill_between(times, prices, min(prices), color=line_color, alpha=0.25)
+    # линия + заливка
+    line_color = "#3B82F6"  # синий
+    ax.plot(times, prices, linewidth=2.3, color=line_color)
+    ax.fill_between(times, prices, min(prices), color=line_color, alpha=0.22)
 
-    ax.grid(True, linewidth=0.3, alpha=0.3)
+    # сетка
+    ax.grid(True, linewidth=0.3, alpha=0.25)
 
-    for side in ["top", "right"]:
-        ax.spines[side].set_visible(False)
+    # оформление осей
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["bottom"].set_color("#D0D7E2")
+    ax.spines["left"].set_color("#D0D7E2")
 
-    ax.spines["bottom"].set_color("#CCCCCC")
-    ax.spines["left"].set_color("#CCCCCC")
+    ax.tick_params(axis="x", colors="#6B7280", labelsize=8)
+    ax.tick_params(axis="y", colors="#6B7280", labelsize=8)
 
-    ax.tick_params(axis="x", colors="#666666", labelsize=8)
-    ax.tick_params(axis="y", colors="#666666", labelsize=8)
-
+    # заголовок
     ax.set_title(
         f"TONCOIN:USDT     1 TON = {current_price:.3f} $",
-        color="#222222",
+        color="#111827",
         fontsize=12,
         loc="left",
+        pad=10,
     )
 
-    fig.tight_layout()
+    fig.tight_layout(pad=1.5)
 
     buf = io.BytesIO()
     plt.savefig(buf, format="png")
