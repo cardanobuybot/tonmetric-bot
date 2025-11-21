@@ -8,7 +8,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
