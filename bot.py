@@ -1,10 +1,10 @@
 import os
 import io
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests
 
-# headless backend, чтобы работало на сервере
+# headless backend для сервера
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -14,62 +14,87 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-COINGECKO_SIMPLE_URL = "https://api.coingecko.com/api/v3/simple/price"
-COINGECKO_CHART_URL = "https://api.coingecko.com/api/v3/coins/the-open-network/market_chart"
-TON_ID = "the-open-network"
+# --- MEXC API ---
+MEXC_TICKER_URL = "https://api.mexc.com/api/v3/ticker/price"
+MEXC_KLINES_URL = "https://api.mexc.com/api/v3/klines"
+TON_SYMBOL = "TONUSDT"
 
 
 # --------- ДАННЫЕ ---------
 
 def get_ton_price_usd() -> float | None:
-    """Текущий курс TON в USD."""
+    """Текущий курс TON в USDT с биржи MEXC."""
     try:
         r = requests.get(
-            COINGECKO_SIMPLE_URL,
-            params={"ids": TON_ID, "vs_currencies": "usd"},
+            MEXC_TICKER_URL,
+            params={"symbol": TON_SYMBOL},
             timeout=8,
         )
         if r.status_code != 200:
             print("Price status:", r.status_code, r.text[:200])
             return None
+
         data = r.json()
-        return float(data[TON_ID]["usd"])
+        # ответ вида: {"symbol":"TONUSDT","price":"1.4900"}
+        price_str = data.get("price")
+        if not price_str:
+            print("No 'price' in response:", data)
+            return None
+
+        return float(price_str)
     except Exception as e:
-        print("Error getting price:", e)
+        print("Error getting price from MEXC:", e)
         return None
 
 
-def get_ton_history(days: int = 3):
-    """История цены для графика за N дней (часовые свечи)."""
+def get_ton_history(hours: int = 72):
+    """
+    История цены TON c MEXC.
+    Берём 1-часовые свечи за N часов (по умолчанию 72 = 3 дня).
+    """
     try:
+        # лимит свечей укажем равным числу часов (макс 1000, нам надо мало)
         r = requests.get(
-            COINGECKO_CHART_URL,
-            params={"vs_currency": "usd", "days": days, "interval": "hourly"},
+            MEXC_KLINES_URL,
+            params={
+                "symbol": TON_SYMBOL,
+                "interval": "1h",
+                "limit": hours,
+            },
             timeout=15,
         )
         if r.status_code != 200:
-            print("History status:", r.status_code, r.text[:200])
+            print("Klines status:", r.status_code, r.text[:200])
             return [], []
 
-        j = r.json()
-        if "prices" not in j:
-            print("No 'prices' in response:", j)
+        klines = r.json()
+        if not klines:
+            print("Empty klines list")
             return [], []
 
-        data = j["prices"]
-        if not data:
-            print("Empty prices list")
-            return [], []
+        times = []
+        prices = []
 
-        times = [datetime.fromtimestamp(p[0] / 1000) for p in data]
-        prices = [p[1] for p in data]
+        for k in klines:
+            # формат строки:
+            # [ openTime, open, high, low, close, volume, ... ]
+            open_time_ms = k[0]
+            close_price_str = k[4]
+
+            t = datetime.fromtimestamp(open_time_ms / 1000)
+            price = float(close_price_str)
+
+            times.append(t)
+            prices.append(price)
+
         return times, prices
+
     except Exception as e:
-        print("Error getting history:", e)
+        print("Error getting history from MEXC:", e)
         return [], []
 
 
-# --------- ГРАФИК (другой стиль) ---------
+# --------- ГРАФИК ---------
 
 def create_ton_chart() -> bytes:
     """
@@ -78,8 +103,7 @@ def create_ton_chart() -> bytes:
     - мягкая зелёная линия
     - заливка под графиком
     """
-
-    times, prices = get_ton_history(days=3)
+    times, prices = get_ton_history(hours=72)
     if not times or not prices:
         raise RuntimeError("No data for chart")
 
@@ -115,17 +139,15 @@ def create_ton_chart() -> bytes:
 
     # заголовок
     ax.set_title(
-        f"TONCOIN:USD         1 TON = {current_price:.2f} $",
+        f"TONCOIN:USDT         1 TON = {current_price:.3f} $",
         loc="left",
         fontsize=12,
         color="#222222",
         pad=10,
     )
 
-    # небольшой отступ по краям
     fig.tight_layout(pad=2)
 
-    # вывод в байты
     buf = io.BytesIO()
     plt.savefig(buf, format="png", bbox_inches="tight")
     plt.close(fig)
@@ -140,16 +162,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Привет! Я TONMETRIC BOT.\n"
         "Команды:\n"
         "/price — курс TON\n"
-        "/chart — график цены TON"
+        "/chart — график цены TON (по MEXC)"
     )
 
 
 async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     price = get_ton_price_usd()
     if price is None:
-        await update.message.reply_text("Не могу получить курс, попробуй позже 🙈")
+        await update.message.reply_text("Не могу получить курс TON (MEXC), попробуй позже 🙈")
     else:
-        await update.message.reply_text(f"1 TON = {price:.2f} $")
+        await update.message.reply_text(f"1 TON = {price:.3f} $ (MEXC)")
 
 
 async def chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
