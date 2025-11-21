@@ -3,7 +3,6 @@ import io
 from datetime import datetime
 
 import requests
-
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -206,14 +205,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = [
         [
-            InlineKeyboardButton("English", callback_data="lang_en"),
-            InlineKeyboardButton("Русский", callback_data="lang_ru"),
-            InlineKeyboardButton("Українська", callback_data="lang_uk"),
+            InlineKeyboardButton("Курс", callback_data="price"),
+            InlineKeyboardButton("Уведомления", callback_data="notifications"),
+        ],
+        [
+            InlineKeyboardButton("График", callback_data="chart"),
+            InlineKeyboardButton("Купить Stars", callback_data="buy_stars"),
         ]
     ]
 
     await update.message.reply_text(
-        "Выберите язык / Select language / Оберіть мову:",
+        "Выберите действие:",
         reply_markup=InlineKeyboardMarkup(keyboard),
     )
 
@@ -227,49 +229,19 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     data = query.data
 
-    if data.startswith("lang_"):
-        lang = data.split("_", 1)[1]  # en / ru / uk
-        user_lang[user_id] = lang
-
-        # подтверждение языка
-        await query.message.reply_text(text_lang_confirm(lang))
-
-        # сразу курс + график
+    if data == "price":
+        lang = get_user_language(user_id)
         await send_price_and_chart(chat_id, lang, context)
 
+    elif data == "chart":
+        lang = get_user_language(user_id)
+        await send_price_and_chart(chat_id, lang, context)
 
-async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    lang = get_user_language(user_id)
+    elif data == "buy_stars":
+        await query.message.reply_text("Скоро будет доступно… 🔜")
 
-    p = get_ton_price_usd()
-    if p:
-        await update.message.reply_text(text_price_ok(lang, p))
     else:
-        await update.message.reply_text(text_price_error(lang))
-
-
-async def chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    lang = get_user_language(user_id)
-
-    info = await update.message.reply_text(text_chart_build(lang))
-
-    try:
-        img = create_ton_chart()
-        await update.message.reply_photo(
-            img,
-            caption="[Binance](https://www.binance.com/referral/earn-together/refer2earn-usdc/claim?hl=en&ref=GRO_28502_1C1WM&utm_source=default)",
-            parse_mode="Markdown",
-        )
-    except Exception as e:
-        print("Chart error:", e)
-        await update.message.reply_text(text_chart_error(lang))
-    finally:
-        try:
-            await info.delete()
-        except:
-            pass
+        await query.message.reply_text("Неизвестная команда!")
 
 
 def main():
@@ -279,8 +251,6 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("price", price))
-    app.add_handler(CommandHandler("chart", chart))
     app.add_handler(CallbackQueryHandler(button))
 
     print("TONMETRIC BOT started")
