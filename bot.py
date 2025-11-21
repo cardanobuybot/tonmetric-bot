@@ -204,7 +204,7 @@ def footer_buttons():
         [KeyboardButton("Курс")],
         [KeyboardButton("График")],
         [KeyboardButton("Уведомления")],
-        [KeyboardButton("Купить Toncoins")]
+        [KeyboardButton("Купить Stars")]
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
@@ -219,6 +219,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Привет! Я TONMETRIC BOT. Выберите действие:",
         reply_markup=footer_buttons(),  # закрепляем клавиатуру с кнопками
     )
+
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -251,10 +252,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif update.message.text == "Уведомления":
         # Логика уведомлений
         await update.message.reply_text("Настройки уведомлений")
-    elif update.message.text == "Купить Toncoins":
-        # Логика покупки
-        await update.message.reply_text("Покупка Toncoins")
-
+    elif update.message.text == "Купить Stars":
+        # Логика перехода на сайт TONStars
+        await update.message.reply_text("Переходите на [tonstars.io](https://tonstars.io/)")
 
 async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
