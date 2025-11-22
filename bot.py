@@ -38,19 +38,19 @@ BUTTON_TEXTS = {
         "price": "Курс",
         "chart": "График",
         "notify": "Уведомления",
-        "buy": "Купить Toncoins",
+        "buy": "Купить Stars ⭐",
     },
     "en": {
         "price": "Price",
         "chart": "Chart",
         "notify": "Notifications",
-        "buy": "Buy Toncoins",
+        "buy": "Buy Stars ⭐",
     },
     "uk": {
         "price": "Курс",
         "chart": "Графік",
         "notify": "Сповіщення",
-        "buy": "Купити Toncoins",
+        "buy": "Купити Stars ⭐",
     },
 }
 
@@ -329,8 +329,13 @@ async def buttons_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Настройки уведомлений будут доступны позже.")
 
     elif text == bt["buy"]:
-        # Кнопка «Купить Toncoins»
-        await update.message.reply_text("Покупка Toncoins")
+        # Кнопка «Купить Stars ⭐» → tonstars.io
+        if lang == "en":
+            await update.message.reply_text("Open TON Stars: https://tonstars.io")
+        elif lang == "uk":
+            await update.message.reply_text("Відкрийте TON Stars: https://tonstars.io")
+        else:
+            await update.message.reply_text("Откройте TON Stars: https://tonstars.io")
 
 
 async def price(update: Update, context: ContextTypes.DEFAULT_TYPE):
