@@ -31,14 +31,12 @@ BINANCE_TICKER = "https://api.binance.com/api/v3/ticker/price"
 BINANCE_KLINES = "https://api.binance.com/api/v3/klines"
 SYMBOL = "TONUSDT"
 
-TONSTARS_URL = "https://tonstars.io"
-
-# Храним настройки пользователей в памяти
-user_lang: dict[int, str] = {}         # user_id -> 'ru' | 'en' | 'uk'
-user_subscribed: set[int] = set()      # user_ids, подписанные на уведомления
+# Язык пользователя: user_id -> 'ru' | 'en' | 'uk'
+user_lang: dict[int, str] = {}
 
 
 # ------------------ ТЕКСТЫ ------------------
+
 
 def get_user_language(user_id: int) -> str:
     return user_lang.get(user_id, "ru")
@@ -89,102 +87,75 @@ def text_chart_error(lang: str) -> str:
         return "Не удалось построить график 🙈"
 
 
-def text_tonstars(lang: str) -> str:
-    if lang == "en":
-        return f"Open TON Stars: {TONSTARS_URL}"
-    elif lang == "uk":
-        return f"Відкрийте TON Stars: {TONSTARS_URL}"
-    else:
-        return f"Откройте TON Stars: {TONSTARS_URL}"
-
-
-def text_subscribe_info(lang: str) -> str:
+def text_notify_info(lang: str) -> str:
     if lang == "en":
         return (
-            "We will notify you if Toncoin price changes more than 10% "
-            "(up or down) from the current price.\n\n"
-            "Press “Unsubscribe” if you no longer want to receive such alerts."
+            "Notifications\n\n"
+            "Soon I will be able to notify you when TON price changes "
+            "by more than 10% from the current value."
         )
     elif lang == "uk":
         return (
-            "Ми повідомимо про зміну ціни Toncoin більш ніж на 10% "
-            "(вгору або вниз) від поточної ціни.\n\n"
-            "Натиснувши кнопку «Відписатися», ви більше не будете отримувати такі сповіщення."
+            "Сповіщення\n\n"
+            "Скоро бот зможе повідомляти, коли ціна TON зміниться "
+            "більше ніж на 10% від поточної."
         )
     else:
         return (
-            "Уведомим об изменении цены Toncoin более чем на 10% "
-            "(вверх или вниз) от текущей цены.\n\n"
-            "Нажав кнопку «Отписаться» вы больше не будете получать подобные уведомления."
+            "Уведомления\n\n"
+            "Скоро бот сможет уведомлять, когда цена TON изменится "
+            "более чем на 10% от текущей."
         )
 
 
-def text_unsubscribed(lang: str) -> str:
+def text_buy_stars(lang: str) -> str:
+    url = "https://tonstars.io"
     if lang == "en":
-        return "You have unsubscribed from TON price alerts."
+        return f"Open TON Stars: {url}"
     elif lang == "uk":
-        return "Ви відписалися від сповіщень про ціну TON."
+        return f"Відкрийте TON Stars: {url}"
     else:
-        return "Вы отписались от уведомлений о цене TON."
+        return f"Откройте TON Stars: {url}"
 
 
-def text_already_subscribed(lang: str) -> str:
+def text_wallet(lang: str) -> str:
+    url = "http://t.me/send?start=r-71wfg"
     if lang == "en":
-        return "You are already subscribed to TON price alerts."
+        return f"Open wallet: {url}"
     elif lang == "uk":
-        return "Ви вже підписані на сповіщення про ціну TON."
+        return f"Відкрити гаманець: {url}"
     else:
-        return "Вы уже подписаны на уведомления о цене TON."
+        return f"Открыть кошелёк: {url}"
 
 
-def text_unsubscribe_button(lang: str) -> str:
-    if lang == "en":
-        return "Unsubscribe"
-    elif lang == "uk":
-        return "Відписатися"
-    else:
-        return "Отписаться"
-
-
-# подписи для нижних кнопок
+# Подписи для нижних кнопок
 FOOTER_BUTTONS = {
     "ru": {
         "rate": "Курс",
         "chart": "График",
         "notify": "Уведомления",
         "buy": "Купить Stars ⭐",
+        "wallet": "Кошелёк",
     },
     "en": {
         "rate": "Rate",
         "chart": "Chart",
         "notify": "Notifications",
         "buy": "Buy Stars ⭐",
+        "wallet": "Wallet",
     },
     "uk": {
         "rate": "Курс",
         "chart": "Графік",
         "notify": "Сповіщення",
         "buy": "Купити Stars ⭐",
+        "wallet": "Гаманець",
     },
 }
 
 
-def footer_buttons(lang: str) -> ReplyKeyboardMarkup:
-    bt = FOOTER_BUTTONS.get(lang, FOOTER_BUTTONS["ru"])
-    keyboard = [
-        [KeyboardButton(bt["rate"])],
-        [KeyboardButton(bt["chart"])],
-        [KeyboardButton(bt["notify"])],
-        [KeyboardButton(bt["buy"])],
-    ]
-    return ReplyKeyboardMarkup(
-        keyboard,
-        resize_keyboard=True,
-        one_time_keyboard=False,
-    )
-
-
 # ------------------ ДАННЫЕ ------------------
+
 
 def get_ton_price_usd() -> float | None:
     try:
@@ -210,10 +181,11 @@ def get_ton_history(hours: int = 72):
 
         klines = r.json()
         if not isinstance(klines, list):
+            print("Binance error:", klines)
             return [], []
 
         times = [datetime.fromtimestamp(k[0] / 1000) for k in klines]
-        prices = [float(k[4]) for k in klines]
+        prices = [float(k[4]) for k in klines]  # close
 
         return times, prices
 
@@ -224,6 +196,7 @@ def get_ton_history(hours: int = 72):
 
 # ------------------ ГРАФИК ------------------
 
+
 def create_ton_chart() -> bytes:
     times, prices = get_ton_history(72)
     if not times or not prices:
@@ -232,7 +205,6 @@ def create_ton_chart() -> bytes:
     current_price = prices[-1]
 
     plt.style.use("default")
-
     fig, ax = plt.subplots(figsize=(9, 6), dpi=250)
 
     fig.patch.set_facecolor("#FFFFFF")
@@ -252,6 +224,7 @@ def create_ton_chart() -> bytes:
     ax.tick_params(axis="x", colors="#6B7280", labelsize=8)
     ax.tick_params(axis="y", colors="#6B7280", labelsize=8)
 
+    # Цена снизу графика
     fig.text(
         0.01,
         -0.04,
@@ -272,6 +245,7 @@ def create_ton_chart() -> bytes:
 
 # ----------- ОТПРАВКА ЦЕНЫ + ГРАФИКА ------------
 
+
 async def send_price_and_chart(chat_id: int, lang: str, context: ContextTypes.DEFAULT_TYPE):
     price = get_ton_price_usd()
     if price is None:
@@ -285,7 +259,8 @@ async def send_price_and_chart(chat_id: int, lang: str, context: ContextTypes.DE
         await context.bot.send_photo(
             chat_id,
             img,
-            caption="[Binance](https://www.binance.com/referral/earn-together/"
+            caption="[Binance]"
+                     "(https://www.binance.com/referral/earn-together/"
                      "refer2earn-usdc/claim?hl=en&ref=GRO_28502_1C1WM&utm_source=default)",
             parse_mode="Markdown",
         )
@@ -294,10 +269,31 @@ async def send_price_and_chart(chat_id: int, lang: str, context: ContextTypes.DE
         await context.bot.send_message(chat_id, text_chart_error(lang))
 
 
+# ------------------ КНОПКИ ------------------
+
+
+def footer_buttons(lang: str) -> ReplyKeyboardMarkup:
+    bt = FOOTER_BUTTONS.get(lang, FOOTER_BUTTONS["ru"])
+    keyboard = [
+        [KeyboardButton(bt["rate"])],
+        [KeyboardButton(bt["chart"])],
+        [KeyboardButton(bt["notify"])],
+        [KeyboardButton(bt["buy"])],
+        [KeyboardButton(bt["wallet"])],
+    ]
+    return ReplyKeyboardMarkup(
+        keyboard,
+        resize_keyboard=True,
+        one_time_keyboard=False,
+    )
+
+
 # ------------------ ХЕНДЛЕРЫ ------------------
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    # по умолчанию русский, пока не выбрал язык
     user_lang[user_id] = "ru"
 
     keyboard = [
@@ -314,7 +310,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def lang_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
@@ -322,24 +318,18 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = query.message.chat_id
     data = query.data
 
-    # выбор языка
     if data.startswith("lang_"):
         lang = data.split("_", 1)[1]  # en / ru / uk
         user_lang[user_id] = lang
 
+        # подтверждение языка + сразу прикручиваем нижние кнопки
         await query.message.reply_text(
             text_lang_confirm(lang),
             reply_markup=footer_buttons(lang),
         )
 
+        # курс + график
         await send_price_and_chart(chat_id, lang, context)
-
-    # отписка от уведомлений
-    elif data == "unsubscribe":
-        lang = get_user_language(user_id)
-        if user_id in user_subscribed:
-            user_subscribed.discard(user_id)
-        await query.message.reply_text(text_unsubscribed(lang))
 
 
 async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -347,13 +337,13 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
     lang = get_user_language(user_id)
     bt = FOOTER_BUTTONS.get(lang, FOOTER_BUTTONS["ru"])
 
-    text = (update.message.text or "").strip()
+    text = update.message.text
 
     # Курс
     if text == bt["rate"]:
-        p = get_ton_price_usd()
-        if p:
-            await update.message.reply_text(text_price_ok(lang, p))
+        price = get_ton_price_usd()
+        if price:
+            await update.message.reply_text(text_price_ok(lang, price))
         else:
             await update.message.reply_text(text_price_error(lang))
 
@@ -364,7 +354,8 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
             img = create_ton_chart()
             await update.message.reply_photo(
                 img,
-                caption="[Binance](https://www.binance.com/referral/earn-together/"
+                caption="[Binance]"
+                         "(https://www.binance.com/referral/earn-together/"
                          "refer2earn-usdc/claim?hl=en&ref=GRO_28502_1C1WM&utm_source=default)",
                 parse_mode="Markdown",
             )
@@ -377,52 +368,50 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
             except Exception:
                 pass
 
-    # Уведомления (подписка)
+    # Уведомления
     elif text == bt["notify"]:
-        # отмечаем пользователя как подписанного
-        first_time = user_id not in user_subscribed
-        user_subscribed.add(user_id)
-
-        if not first_time:
-            await update.message.reply_text(text_already_subscribed(lang))
-
-        keyboard = [[InlineKeyboardButton(text_unsubscribe_button(lang), callback_data="unsubscribe")]]
-
-        await update.message.reply_text(
-            text_subscribe_info(lang),
-            reply_markup=InlineKeyboardMarkup(keyboard),
-        )
+        await update.message.reply_text(text_notify_info(lang))
 
     # Купить Stars
     elif text == bt["buy"]:
         await update.message.reply_text(
-            text_tonstars(lang),
+            text_buy_stars(lang),
+            disable_web_page_preview=False,
+        )
+
+    # Кошелёк
+    elif text == bt["wallet"]:
+        await update.message.reply_text(
+            text_wallet(lang),
             disable_web_page_preview=False,
         )
 
 
-async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Команды /price и /chart остаются, чтобы работали слеши
+
+
+async def cmd_price(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
 
-    p = get_ton_price_usd()
-    if p:
-        await update.message.reply_text(text_price_ok(lang, p))
+    price = get_ton_price_usd()
+    if price:
+        await update.message.reply_text(text_price_ok(lang, price))
     else:
         await update.message.reply_text(text_price_error(lang))
 
 
-async def chart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
 
     info = await update.message.reply_text(text_chart_build(lang))
-
     try:
         img = create_ton_chart()
         await update.message.reply_photo(
             img,
-            caption="[Binance](https://www.binance.com/referral/earn-together/"
+            caption="[Binance]"
+                     "(https://www.binance.com/referral/earn-together/"
                      "refer2earn-usdc/claim?hl=en&ref=GRO_28502_1C1WM&utm_source=default)",
             parse_mode="Markdown",
         )
@@ -442,15 +431,21 @@ def main():
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # команды
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("price", price_command))
-    app.add_handler(CommandHandler("chart", chart_command))
+    app.add_handler(CommandHandler("price", cmd_price))
+    app.add_handler(CommandHandler("chart", cmd_chart))
 
-    # callback-кнопки (язык, отписка)
-    app.add_handler(CallbackQueryHandler(callback_handler))
+    # выбор языка
+    app.add_handler(CallbackQueryHandler(lang_button))
 
-    # все текстовые сообщения (нижние кнопки)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, footer_buttons_handler))
+    # обработка текстовых кнопок
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            footer_buttons_handler,
+        )
+    )
 
     app.run_polling()
 
