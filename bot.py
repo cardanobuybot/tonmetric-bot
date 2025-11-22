@@ -407,7 +407,6 @@ async def check_price_job(context: ContextTypes.DEFAULT_TYPE):
                 print("send notification error:", e)
                 continue
 
-            # Обновляем базовую цену
             await conn.execute(
                 """
                 UPDATE ton_subscriptions
@@ -512,17 +511,14 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     txt = (update.message.text or "").strip()
 
-    # Курс
     if txt == labels["rate"]:
         await price_command(update, context)
         return
 
-    # График
     if txt == labels["chart"]:
         await chart_command(update, context)
         return
 
-    # Уведомления
     if txt == labels["notify"]:
         if not DATABASE_URL:
             await update.message.reply_text(text_notifications_unavailable(lang))
@@ -539,17 +535,14 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(text_subscribed(lang, price), reply_markup=kb)
         return
 
-    # Купить Stars
     if txt == labels["stars"]:
         await update.message.reply_text(text_buy_stars(lang))
         return
 
-    # Кошелёк
     if txt == labels["wallet"]:
         await update.message.reply_text(text_wallet(lang))
         return
 
-    # Мемляндия
     if txt == labels["mem"]:
         await update.message.reply_text(text_memland(lang))
         return
@@ -569,7 +562,6 @@ def main():
     app.add_handler(CallbackQueryHandler(callback_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, footer_buttons_handler))
 
-    # фоновые уведомления (если есть DATABASE_URL)
     if DATABASE_URL and app.job_queue is not None:
         app.job_queue.run_repeating(check_price_job, interval=300, first=60)
     else:
