@@ -3,4 +3,3 @@ requests
 matplotlib
 beautifulsoup4
 asyncpg
-psycopg2
