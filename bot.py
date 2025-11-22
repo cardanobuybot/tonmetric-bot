@@ -88,18 +88,21 @@ def text_chart_error(lang: str) -> str:
 def text_notifications_intro(lang: str) -> str:
     if lang == "en":
         return (
-            "You will receive a notification when TON price changes by more than 10% "
-            "up or down from the current price."
+            "You will receive an alert when TON price changes by more than 10% "
+            "up or down from the current price.\n\n"
+            "Press “Unsubscribe” if you no longer want to receive alerts."
         )
     elif lang == "uk":
         return (
             "Ми повідомимо, коли ціна TON зміниться більш ніж на 10% "
-            "вгору або вниз від поточної ціни."
+            "вгору або вниз від поточної ціни.\n\n"
+            "Натисніть «Відписатися», якщо більше не хочете отримувати сповіщення."
         )
     else:
         return (
             "Мы уведомим, когда цена TON изменится более чем на 10% "
-            "вверх или вниз от текущей цены."
+            "вверх или вниз от текущей цены.\n\n"
+            "Нажмите «Отписаться», если больше не хотите получать уведомления."
         )
 
 
@@ -133,9 +136,6 @@ def text_alert(lang: str, old_price: float, new_price: float) -> str:
             f"Старая цена: {old_price:.3f} $\n"
             f"Новая цена: {new_price:.3f} $ ({change:+.1f}%)"
         )
-
-
-# ------------------ LABELS КНОПОК ------------------
 
 
 def footer_labels(lang: str):
@@ -342,6 +342,26 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(text_unsubscribed(lang))
 
 
+def _check_and_alert(user_id: int, lang: str, current_price: float) -> str | None:
+    """
+    Проверяет, превысило ли изменение цены 10% от baseline.
+    Если да — возвращает текст алерта, и обновляет baseline.
+    Если нет или baseline нет — возвращает None.
+    """
+    if user_id not in user_subscriptions:
+        return None
+    baseline = user_subscriptions[user_id]
+    if baseline <= 0:
+        return None
+
+    change_ratio = abs(current_price - baseline) / baseline
+    if change_ratio >= 0.10:
+        # обновляем baseline, чтобы следующее уведомление было от новой цены
+        user_subscriptions[user_id] = current_price
+        return text_alert(lang, baseline, current_price)
+    return None
+
+
 async def footer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
@@ -353,6 +373,9 @@ async def footer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         p = get_ton_price_usd()
         if p:
             await update.message.reply_text(text_price_ok(lang, p))
+            alert_text = _check_and_alert(user_id, lang, p)
+            if alert_text:
+                await update.message.reply_text(alert_text)
         else:
             await update.message.reply_text(text_price_error(lang))
 
@@ -360,12 +383,17 @@ async def footer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == labels["chart"]:
         info = await update.message.reply_text(text_chart_build(lang))
         try:
+            p = get_ton_price_usd()
             img = create_ton_chart()
             await update.message.reply_photo(
                 img,
                 caption="[Binance](https://www.binance.com/referral/earn-together/refer2earn-usdc/claim?hl=en&ref=GRO_28502_1C1WM&utm_source=default)",
                 parse_mode="Markdown",
             )
+            if p:
+                alert_text = _check_and_alert(user_id, lang, p)
+                if alert_text:
+                    await update.message.reply_text(alert_text)
         except Exception as e:
             print("Chart error:", e)
             await update.message.reply_text(text_chart_error(lang))
@@ -385,11 +413,13 @@ async def footer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # сохраняем baseline для этого пользователя
         user_subscriptions[user_id] = current_price
 
+        unsub_text = (
+            "Отписаться" if lang == "ru" else
+            ("Unsubscribe" if lang == "en" else "Відписатися")
+        )
+
         keyboard = [
-            [InlineKeyboardButton(
-                "Отписаться" if lang == "ru" else ("Unsubscribe" if lang == "en" else "Відписатися"),
-                callback_data="unsub"
-            )]
+            [InlineKeyboardButton(unsub_text, callback_data="unsub")]
         ]
 
         await update.message.reply_text(
@@ -424,6 +454,9 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p = get_ton_price_usd()
     if p:
         await update.message.reply_text(text_price_ok(lang, p))
+        alert_text = _check_and_alert(user_id, lang, p)
+        if alert_text:
+            await update.message.reply_text(alert_text)
     else:
         await update.message.reply_text(text_price_error(lang))
 
@@ -434,12 +467,17 @@ async def chart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     info = await update.message.reply_text(text_chart_build(lang))
     try:
+        p = get_ton_price_usd()
         img = create_ton_chart()
         await update.message.reply_photo(
             img,
             caption="[Binance](https://www.binance.com/referral/earn-together/refer2earn-usdc/claim?hl=en&ref=GRO_28502_1C1WM&utm_source=default)",
             parse_mode="Markdown",
         )
+        if p:
+            alert_text = _check_and_alert(user_id, lang, p)
+            if alert_text:
+                await update.message.reply_text(alert_text)
     except Exception as e:
         print("Chart error:", e)
         await update.message.reply_text(text_chart_error(lang))
@@ -448,33 +486,6 @@ async def chart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await info.delete()
         except Exception:
             pass
-
-
-# ---------- ФОНОВЫЙ JOB ДЛЯ УВЕДОМЛЕНИЙ ----------
-
-
-async def price_watcher(context: ContextTypes.DEFAULT_TYPE):
-    if not user_subscriptions:
-        return
-
-    current_price = get_ton_price_usd()
-    if current_price is None:
-        return
-
-    # копию items, чтобы можно было изменять dict по ходу
-    for user_id, baseline in list(user_subscriptions.items()):
-        if baseline <= 0:
-            continue
-        change_ratio = abs(current_price - baseline) / baseline
-        if change_ratio >= 0.10:  # 10%
-            lang = get_user_language(user_id)
-            text = text_alert(lang, baseline, current_price)
-            try:
-                await context.bot.send_message(chat_id=user_id, text=text)
-            except Exception as e:
-                print("Notify error:", e)
-            # обновляем baseline, чтобы следующее уведомление было от новой цены
-            user_subscriptions[user_id] = current_price
 
 
 # ------------------ MAIN ------------------
@@ -496,10 +507,6 @@ def main():
 
     # обработка текстовых кнопок (reply keyboard)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, footer_handler))
-
-    # фоновая задача слежения за ценой
-    job_queue = app.job_queue
-    job_queue.run_repeating(price_watcher, interval=300, first=30)  # каждые 5 минут
 
     app.run_polling()
 
