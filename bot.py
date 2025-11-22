@@ -9,6 +9,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from bs4 import BeautifulSoup  # не забудь добавить в requirements.txt: beautifulsoup4
+
 from telegram import (
     Update,
     InlineKeyboardMarkup,
@@ -31,6 +33,9 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 BINANCE_TICKER = "https://api.binance.com/api/v3/ticker/price"
 BINANCE_KLINES = "https://api.binance.com/api/v3/klines"
 SYMBOL = "TONUSDT"
+
+# MemeRepublic Leaderboard
+MEME_LEADERBOARD_URL = "https://www.tonmemerepublic.com/leaderboard"
 
 # Язык пользователя
 user_lang: Dict[int, str] = {}          # user_id -> 'ru' | 'en' | 'uk'
@@ -138,6 +143,24 @@ def text_alert(lang: str, old_price: float, new_price: float) -> str:
         )
 
 
+def text_meme_header(lang: str) -> str:
+    if lang == "en":
+        return "🏆 TOP 5 MemeRepublic 🦄"
+    elif lang == "uk":
+        return "🏆 ТОП-5 MemeRepublic 🦄"
+    else:
+        return "🏆 ТОП-5 MemeRepublic 🦄"
+
+
+def text_meme_error(lang: str) -> str:
+    if lang == "en":
+        return "Can't get TOP 5 now 🙈"
+    elif lang == "uk":
+        return "Не вдалося отримати ТОП-5 🙈"
+    else:
+        return "Не удалось получить ТОП-5 🙈"
+
+
 def footer_labels(lang: str):
     if lang == "en":
         return {
@@ -146,6 +169,7 @@ def footer_labels(lang: str):
             "notify": "Notifications",
             "buy": "Buy Stars ⭐",
             "wallet": "Wallet",
+            "meme": "Memeland 🦄",
         }
     elif lang == "uk":
         return {
@@ -154,6 +178,7 @@ def footer_labels(lang: str):
             "notify": "Сповіщення",
             "buy": "Купити Stars ⭐",
             "wallet": "Гаманець",
+            "meme": "Мемляндія 🦄",
         }
     else:
         return {
@@ -162,6 +187,7 @@ def footer_labels(lang: str):
             "notify": "Уведомления",
             "buy": "Купить Stars ⭐",
             "wallet": "Кошелёк",
+            "meme": "Мемляндия 🦄",
         }
 
 
@@ -173,6 +199,7 @@ def footer_keyboard(lang: str) -> ReplyKeyboardMarkup:
         [KeyboardButton(labels["notify"])],
         [KeyboardButton(labels["buy"])],
         [KeyboardButton(labels["wallet"])],
+        [KeyboardButton(labels["meme"])],  # шестая кнопка
     ]
     return ReplyKeyboardMarkup(
         keyboard,
@@ -219,6 +246,44 @@ def get_ton_history(hours=72):
     except Exception as e:
         print("History error:", e)
         return [], []
+
+
+# ------------------ ТОП-5 MEMEREPUBLIC ------------------
+
+
+def fetch_top5_memes():
+    try:
+        r = requests.get(MEME_LEADERBOARD_URL, timeout=10)
+        r.raise_for_status()
+    except Exception as e:
+        print("Memeland request error:", e)
+        return []
+
+    try:
+        soup = BeautifulSoup(r.text, "html.parser")
+        # предполагаем, что на странице есть одна основная таблица с лидербордом
+        rows = soup.select("table tr")
+        if len(rows) < 2:
+            return []
+
+        top5 = []
+        # пропускаем заголовок (первая строка), берём следующие 5
+        for row in rows[1:6]:
+            cols = [c.get_text(strip=True) for c in row.find_all("td")]
+            if len(cols) < 2:
+                continue
+
+            # часто формат таблицы примерно:
+            # 0 - rank, 1 - тикер/название, последний - метрика
+            rank = cols[0]
+            ticker = cols[1]
+            score = cols[-1]
+            top5.append((rank, ticker, score))
+
+        return top5
+    except Exception as e:
+        print("Memeland parse error:", e)
+        return []
 
 
 # ------------------ ГРАФИК ------------------
@@ -345,8 +410,8 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def _check_and_alert(user_id: int, lang: str, current_price: float) -> str | None:
     """
     Проверяет, превысило ли изменение цены 10% от baseline.
-    Если да — возвращает текст алерта, и обновляет baseline.
-    Если нет или baseline нет — возвращает None.
+    Если да — возвращает текст алерта и обновляет baseline.
+    Если нет или baseline нет — None.
     """
     if user_id not in user_subscriptions:
         return None
@@ -356,7 +421,6 @@ def _check_and_alert(user_id: int, lang: str, current_price: float) -> str | Non
 
     change_ratio = abs(current_price - baseline) / baseline
     if change_ratio >= 0.10:
-        # обновляем baseline, чтобы следующее уведомление было от новой цены
         user_subscriptions[user_id] = current_price
         return text_alert(lang, baseline, current_price)
     return None
@@ -410,12 +474,11 @@ async def footer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(text_price_error(lang))
             return
 
-        # сохраняем baseline для этого пользователя
         user_subscriptions[user_id] = current_price
 
         unsub_text = (
-            "Отписаться" if lang == "ru" else
-            ("Unsubscribe" if lang == "en" else "Відписатися")
+            "Отписаться" if lang == "ru"
+            else ("Unsubscribe" if lang == "en" else "Відписатися")
         )
 
         keyboard = [
@@ -427,7 +490,7 @@ async def footer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
-    # Купить Stars ⭐ — текст + ссылка
+    # Купить Stars ⭐
     elif text == labels["buy"]:
         if lang == "en":
             msg = "Open TON Stars: https://tonstars.io"
@@ -437,7 +500,7 @@ async def footer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = "Откройте TON Stars: https://tonstars.io"
         await update.message.reply_text(msg)
 
-    # Кошелёк — ссылка на send-бот
+    # Кошелёк
     elif text == labels["wallet"]:
         if lang == "en":
             msg = "Open wallet: http://t.me/send?start=r-71wfg"
@@ -446,6 +509,22 @@ async def footer_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             msg = "Открыть кошелёк: http://t.me/send?start=r-71wfg"
         await update.message.reply_text(msg)
+
+    # Мемляндия 🦄 — TOP 5
+    elif text == labels["meme"]:
+        top5 = fetch_top5_memes()
+        if not top5:
+            await update.message.reply_text(text_meme_error(lang))
+            return
+
+        lines = [text_meme_header(lang), ""]
+        for rank, ticker, score in top5:
+            lines.append(f"{rank}. {ticker} — {score}")
+
+        await update.message.reply_text(
+            "\n".join(lines),
+            reply_markup=footer_keyboard(lang),
+        )
 
 
 async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
