@@ -2,7 +2,6 @@ import os
 import io
 from datetime import datetime
 
-import asyncio
 import requests
 import matplotlib
 
@@ -36,11 +35,12 @@ BINANCE_TICKER = "https://api.binance.com/api/v3/ticker/price"
 BINANCE_KLINES = "https://api.binance.com/api/v3/klines"
 SYMBOL = "TONUSDT"
 
-# Память по языку
+# Язык пользователя в памяти (просто dict по user_id)
 user_lang: dict[int, str] = {}  # user_id -> 'ru' | 'en' | 'uk'
 
-# Пул к базе
+# Пул соединений к базе
 db_pool: asyncpg.Pool | None = None
+
 
 # -------------------------------------------------
 # ТЕКСТЫ
@@ -91,34 +91,43 @@ def text_chart_error(lang: str) -> str:
         return "Не удалось построить график 🙈"
 
 
-def text_notify_on(lang: str) -> str:
-    if lang == "en":
-        return (
-            "You are subscribed ✅\n\n"
-            "I'll remember the current TON price and later we can send alerts "
-            "when the price changes by more than 10%."
-        )
-    elif lang == "uk":
-        return (
-            "Ви підписані ✅\n\n"
-            "Запам'ятаю поточну ціну TON. Пізніше бот зможе надсилати сповіщення, "
-            "якщо ціна зміниться більш ніж на 10%."
-        )
-    else:
-        return (
-            "Вы подписаны ✅\n\n"
-            "Запомню текущую цену TON. Позже бот сможет присылать уведомления, "
-            "если цена изменится более чем на 10%."
-        )
-
-
-def text_notify_disabled(lang: str) -> str:
+def text_notifications_unavailable(lang: str) -> str:
     if lang == "en":
         return "Notifications are temporarily unavailable 🙈"
     elif lang == "uk":
         return "Сповіщення тимчасово недоступні 🙈"
     else:
         return "Уведомления временно недоступны 🙈"
+
+
+def text_subscribed(lang: str, price: float) -> str:
+    if lang == "en":
+        return (
+            "You are subscribed to TON price alerts ✅\n\n"
+            f"Base price: {price:.3f} $.\n"
+            "We'll notify you when TON moves more than 10% up or down."
+        )
+    elif lang == "uk":
+        return (
+            "Ви підписані на сповіщення про ціну TON ✅\n\n"
+            f"Базова ціна: {price:.3f} $.\n"
+            "Повідомимо, якщо TON зміниться більш ніж на 10% вгору чи вниз."
+        )
+    else:
+        return (
+            "Вы подписаны на уведомления о цене TON ✅\n\n"
+            f"Базовая цена: {price:.3f} $.\n"
+            "Сообщу, если TON изменится больше чем на 10% вверх или вниз."
+        )
+
+
+def text_unsubscribed(lang: str) -> str:
+    if lang == "en":
+        return "You have unsubscribed from TON price alerts."
+    elif lang == "uk":
+        return "Ви відписалися від сповіщень про ціну TON."
+    else:
+        return "Вы отписались от уведомлений о цене TON."
 
 
 def text_unsub_button(lang: str) -> str:
@@ -128,15 +137,6 @@ def text_unsub_button(lang: str) -> str:
         return "Відписатися"
     else:
         return "Отписаться"
-
-
-def text_unsub_ok(lang: str) -> str:
-    if lang == "en":
-        return "You are unsubscribed from price notifications."
-    elif lang == "uk":
-        return "Ви відписалися від сповіщень про ціну."
-    else:
-        return "Вы отписались от уведомлений о цене."
 
 
 def text_wallet(lang: str) -> str:
@@ -159,20 +159,20 @@ def text_buy_stars(lang: str) -> str:
 
 def text_memland(lang: str) -> str:
     if lang == "en":
-        return "Top-5 Memlandia will appear here later 🦄"
+        return "TOP-5 Memeland will appear here later 🦄"
     elif lang == "uk":
         return "Тут пізніше з'явиться ТОП-5 Мемляндії 🦄"
     else:
         return "Тут позже появится ТОП-5 Мемляндии 🦄"
 
 
-# Тексты для кнопок в разных языках
+# подписи для фиксированных кнопок
 FOOTER_LABELS = {
     "ru": {
         "rate": "Курс",
         "chart": "График",
         "notify": "Уведомления",
-        "buy": "Купить Stars ⭐",
+        "stars": "Купить Stars ⭐",
         "wallet": "Кошелёк",
         "mem": "Мемляндия🦄",
     },
@@ -180,7 +180,7 @@ FOOTER_LABELS = {
         "rate": "Курс",
         "chart": "Графік",
         "notify": "Сповіщення",
-        "buy": "Купити Stars ⭐",
+        "stars": "Купити Stars ⭐",
         "wallet": "Гаманець",
         "mem": "Мемляндія🦄",
     },
@@ -188,9 +188,9 @@ FOOTER_LABELS = {
         "rate": "Rate",
         "chart": "Chart",
         "notify": "Notifications",
-        "buy": "Buy Stars ⭐",
+        "stars": "Buy Stars ⭐",
         "wallet": "Wallet",
-        "mem": "Memlandia🦄",
+        "mem": "Memeland 🦄",
     },
 }
 
@@ -201,7 +201,7 @@ def footer_buttons(lang: str) -> ReplyKeyboardMarkup:
         [KeyboardButton(labels["rate"])],
         [KeyboardButton(labels["chart"])],
         [KeyboardButton(labels["notify"])],
-        [KeyboardButton(labels["buy"])],
+        [KeyboardButton(labels["stars"])],
         [KeyboardButton(labels["wallet"])],
         [KeyboardButton(labels["mem"])],
     ]
@@ -209,7 +209,7 @@ def footer_buttons(lang: str) -> ReplyKeyboardMarkup:
 
 
 # -------------------------------------------------
-# РАБОТА С ДАННЫМИ (Binance)
+# BINANCE ДАННЫЕ + ГРАФИК
 # -------------------------------------------------
 
 
@@ -294,9 +294,8 @@ async def send_price_and_chart(chat_id: int, lang: str, context: ContextTypes.DE
     price = get_ton_price_usd()
     if price is None:
         await context.bot.send_message(chat_id, text_price_error(lang))
-        return
-
-    await context.bot.send_message(chat_id, text_price_ok(lang, price))
+    else:
+        await context.bot.send_message(chat_id, text_price_ok(lang, price))
 
     try:
         img = create_ton_chart()
@@ -313,12 +312,11 @@ async def send_price_and_chart(chat_id: int, lang: str, context: ContextTypes.DE
 
 
 # -------------------------------------------------
-# БАЗА ДАННЫХ
+# БАЗА: ПОДПИСКИ
 # -------------------------------------------------
 
 
-async def init_db_pool():
-    """Создаём пул и таблицу, если DATABASE_URL задан."""
+async def init_db():
     global db_pool
     if not DATABASE_URL:
         print("DATABASE_URL not set, notifications disabled")
@@ -329,46 +327,113 @@ async def init_db_pool():
         await conn.execute(
             """
             CREATE TABLE IF NOT EXISTS ton_subscriptions (
-                user_id BIGINT PRIMARY KEY,
-                base_price NUMERIC NOT NULL,
-                lang TEXT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                active BOOLEAN NOT NULL DEFAULT TRUE
+                user_id BIGINT,
+                chat_id BIGINT,
+                base_price DOUBLE PRECISION NOT NULL,
+                lang VARCHAR(3) NOT NULL,
+                PRIMARY KEY (user_id, chat_id)
             );
             """
         )
     print("DB initialized")
 
 
-async def subscribe_user(user_id: int, lang: str, base_price: float) -> bool:
+async def subscribe_user(user_id: int, chat_id: int, lang: str) -> float | None:
+    """Сохраняем/обновляем подписку, возвращаем базовую цену."""
     if db_pool is None:
-        return False
+        return None
+
+    price = get_ton_price_usd()
+    if price is None:
+        return None
+
     async with db_pool.acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO ton_subscriptions (user_id, base_price, lang, active)
-            VALUES ($1, $2, $3, TRUE)
-            ON CONFLICT (user_id) DO UPDATE
-            SET base_price = EXCLUDED.base_price,
-                lang = EXCLUDED.lang,
-                active = TRUE;
+            INSERT INTO ton_subscriptions (user_id, chat_id, base_price, lang)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (user_id, chat_id)
+            DO UPDATE SET base_price = EXCLUDED.base_price,
+                          lang = EXCLUDED.lang
             """,
             user_id,
-            base_price,
+            chat_id,
+            price,
             lang,
         )
-    return True
+    return price
 
 
-async def unsubscribe_user(user_id: int) -> bool:
+async def unsubscribe_user(user_id: int, chat_id: int) -> None:
     if db_pool is None:
-        return False
+        return
     async with db_pool.acquire() as conn:
         await conn.execute(
-            "UPDATE ton_subscriptions SET active = FALSE WHERE user_id = $1;",
+            "DELETE FROM ton_subscriptions WHERE user_id=$1 AND chat_id=$2",
             user_id,
+            chat_id,
         )
-    return True
+
+
+async def check_price_job(context: ContextTypes.DEFAULT_TYPE):
+    """Фоновая задача: каждые N секунд проверяет цену и шлёт пуши."""
+    if db_pool is None:
+        return
+
+    price = get_ton_price_usd()
+    if price is None:
+        print("check_price_job: cannot get price")
+        return
+
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT user_id, chat_id, base_price, lang FROM ton_subscriptions"
+        )
+
+        for row in rows:
+            base = row["base_price"]
+            if base == 0:
+                continue
+
+            diff = abs(price - base) / base
+
+            if diff >= 0.10:  # 10%
+                lang = row["lang"]
+                chat_id = row["chat_id"]
+
+                if lang == "en":
+                    msg = (
+                        "TON price changed more than 10%.\n"
+                        f"Current: {price:.3f} $ (was {base:.3f} $)."
+                    )
+                elif lang == "uk":
+                    msg = (
+                        "Ціна TON змінилася більш ніж на 10%.\n"
+                        f"Поточна: {price:.3f} $ (було {base:.3f} $)."
+                    )
+                else:
+                    msg = (
+                        "Цена TON изменилась более чем на 10%.\n"
+                        f"Текущая: {price:.3f} $ (было {base:.3f} $)."
+                    )
+
+                try:
+                    await context.bot.send_message(chat_id, msg)
+                except Exception as e:
+                    print("send notification error:", e)
+                    continue
+
+                # обновляем базу: новая базовая цена = текущая
+                await conn.execute(
+                    """
+                    UPDATE ton_subscriptions
+                    SET base_price=$1
+                    WHERE user_id=$2 AND chat_id=$3
+                    """,
+                    price,
+                    row["user_id"],
+                    chat_id,
+                )
 
 
 # -------------------------------------------------
@@ -394,7 +459,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def lang_or_unsub_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
@@ -402,18 +467,19 @@ async def lang_or_unsub_button(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = query.from_user.id
     chat_id = query.message.chat_id
 
-    # Выбор языка
+    # выбор языка
     if data.startswith("lang_"):
-        lang = data.split("_", 1)[1]  # en / ru / uk
+        lang = data.split("_", 1)[1]
         user_lang[user_id] = lang
 
-        await query.message.reply_text(text_lang_confirm(lang))
+        await context.bot.send_message(chat_id, text_lang_confirm(lang))
 
-        # Сразу курс + график
+        # сразу курс + график
         await send_price_and_chart(chat_id, lang, context)
 
-        # И показываем нижние кнопки
-        await query.message.reply_text(
+        # и нижние кнопки
+        await context.bot.send_message(
+            chat_id,
             {
                 "en": "Choose an action:",
                 "uk": "Оберіть дію:",
@@ -421,17 +487,14 @@ async def lang_or_unsub_button(update: Update, context: ContextTypes.DEFAULT_TYP
             reply_markup=footer_buttons(lang),
         )
 
-    # Отписка
+    # отписка
     elif data == "unsubscribe":
         lang = get_user_language(user_id)
-        ok = await unsubscribe_user(user_id)
-        if not ok:
-            await query.edit_message_text(text_notify_disabled(lang))
-        else:
-            await query.edit_message_text(text_unsub_ok(lang))
+        await unsubscribe_user(user_id, chat_id)
+        await query.edit_message_text(text_unsubscribed(lang))
 
 
-async def price_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
 
@@ -442,7 +505,7 @@ async def price_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text_price_ok(lang, p))
 
 
-async def chart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def chart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
 
@@ -466,88 +529,87 @@ async def chart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик для нижних текстовых кнопок."""
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
     labels = FOOTER_LABELS.get(lang, FOOTER_LABELS["ru"])
 
-    text = (update.message.text or "").strip()
+    text_val = (update.message.text or "").strip()
 
     # Курс
-    if text == labels["rate"]:
-        await price_cmd(update, context)
+    if text_val == labels["rate"]:
+        await price_command(update, context)
         return
 
     # График
-    if text == labels["chart"]:
-        await chart_cmd(update, context)
+    if text_val == labels["chart"]:
+        await chart_command(update, context)
         return
 
-    # Уведомления
-    if text == labels["notify"]:
+    # Уведомления (подписка)
+    if text_val == labels["notify"]:
         if db_pool is None:
-            await update.message.reply_text(text_notify_disabled(lang))
+            await update.message.reply_text(text_notifications_unavailable(lang))
             return
 
-        price = get_ton_price_usd()
+        price = await subscribe_user(user_id, update.effective_chat.id, lang)
         if price is None:
-            await update.message.reply_text(text_price_error(lang))
+            await update.message.reply_text(text_notifications_unavailable(lang))
             return
 
-        await subscribe_user(user_id, lang, price)
-
-        unsub_btn = InlineKeyboardMarkup(
+        kb = InlineKeyboardMarkup(
             [[InlineKeyboardButton(text_unsub_button(lang), callback_data="unsubscribe")]]
         )
-
-        await update.message.reply_text(text_notify_on(lang), reply_markup=unsub_btn)
+        await update.message.reply_text(text_subscribed(lang, price), reply_markup=kb)
         return
 
     # Купить Stars
-    if text == labels["buy"]:
+    if text_val == labels["stars"]:
         await update.message.reply_text(text_buy_stars(lang))
         return
 
     # Кошелёк
-    if text == labels["wallet"]:
+    if text_val == labels["wallet"]:
         await update.message.reply_text(text_wallet(lang))
         return
 
     # Мемляндия
-    if text == labels["mem"]:
+    if text_val == labels["mem"]:
         await update.message.reply_text(text_memland(lang))
         return
 
 
 # -------------------------------------------------
-# MAIN
+# STARTUP + MAIN
 # -------------------------------------------------
 
 
-async def main():
+async def on_startup(app: Application):
+    await init_db()
+    if app.job_queue is not None and db_pool is not None:
+        app.job_queue.run_repeating(check_price_job, interval=300, first=60)
+    else:
+        print("JobQueue or DB not available, notifications disabled")
+
+
+def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN не задан в переменных окружения")
 
     app: Application = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Инициализация базы (если есть DATABASE_URL)
-    await init_db_pool()
-
-    # Команды
+    # команды
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("price", price_cmd))
-    app.add_handler(CommandHandler("chart", chart_cmd))
+    app.add_handler(CommandHandler("price", price_command))
+    app.add_handler(CommandHandler("chart", chart_command))
 
-    # Callback-кнопки (язык + отписка)
-    app.add_handler(CallbackQueryHandler(lang_or_unsub_button))
+    # callback-кнопки (язык + отписка)
+    app.add_handler(CallbackQueryHandler(callback_handler))
 
-    # Нижние текстовые кнопки
-    app.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, footer_buttons_handler)
-    )
+    # текстовые фикс-кнопки
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, footer_buttons_handler))
 
-    await app.run_polling()
+    app.run_polling(post_init=on_startup)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
