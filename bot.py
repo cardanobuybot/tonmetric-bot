@@ -34,12 +34,13 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN не задан в переменных окружения")
 
-
-# ------------------ BINANCE API ------------------
+# ------------------ BINANCE + MEMLANDIA API ------------------
 
 BINANCE_TICKER = "https://api.binance.com/api/v3/ticker/price"
 BINANCE_KLINES = "https://api.binance.com/api/v3/klines"
 SYMBOL = "TONUSDT"
+
+MEMLAND_URL = "https://memelandia.okhlopkov.com/api/leaderboard"
 
 # ------------------ ЯЗЫК ------------------
 
@@ -381,6 +382,58 @@ def get_ton_history(hours: int = 72):
         return [], []
 
 
+# ------------------ МЕМЛЯНДИЯ ------------------
+
+def get_memland_top5() -> str | None:
+    """
+    Тянем JSON с мемляндії и собираем топ-5 по rank.
+    """
+    try:
+        r = requests.get(MEMLAND_URL, timeout=10)
+        data = r.json()
+
+        # Может быть либо {"items": [...]} либо просто [...]
+        if isinstance(data, list):
+            items = data
+        else:
+            items = data.get("items") or data.get("data") or []
+
+        if not isinstance(items, list) or not items:
+            return None
+
+        # сортировка по rank
+        items = sorted(items, key=lambda x: x.get("rank", 999999))
+
+        top5 = items[:5]
+
+        lines = []
+        for i, token in enumerate(top5, start=1):
+            name = token.get("symbol") or token.get("name") or "?"
+            price = token.get("price") or 0
+            mc = token.get("market_cap") or 0
+            change7 = token.get("price_change_d7") or 0
+            holders = token.get("holders") or 0
+            rank = token.get("rank") or i
+
+            arrow = "⬆️" if change7 > 0 else "⬇️" if change7 < 0 else "➖"
+
+            line = (
+                f"#{rank} — {name}\n"
+                f"💰 Цена: {price:.8f} TON\n"
+                f"📊 Капитализация: {mc:,.0f} USD\n"
+                f"👥 Холдера: {holders}\n"
+                f"📈 7d: {arrow} {change7:.2f}%\n"
+                "───────────────"
+            )
+            lines.append(line)
+
+        return "\n".join(lines)
+
+    except Exception as e:
+        print("MEMLAND error:", e)
+        return None
+
+
 # ------------------ ГРАФИК ------------------
 
 def create_ton_chart() -> bytes:
@@ -585,12 +638,27 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
     # Мемляндия
     if text == t["memland"]:
         if lang == "en":
-            msg = "Top-5 Memland will appear here later 🦄"
+            loading = "Loading Memland top-5… 🦄"
         elif lang == "uk":
-            msg = "Тут пізніше зʼявиться ТОП-5 Мемляндiї 🦄"
+            loading = "Завантажую ТОП-5 Мемляндії… 🦄"
         else:
-            msg = "Тут позже появится ТОП-5 Мемляндии 🦄"
-        await update.message.reply_text(msg)
+            loading = "Загружаю ТОП-5 Мемляндии… 🦄"
+
+        msg = await update.message.reply_text(loading)
+
+        data = get_memland_top5()
+        if not data:
+            if lang == "en":
+                err = "Can't load Memland data 🙈"
+            elif lang == "uk":
+                err = "Не вдалося завантажити дані Мемляндії 🙈"
+            else:
+                err = "Не удалось загрузить данные Мемляндии 🙈"
+
+            await msg.edit_text(err)
+            return
+
+        await msg.edit_text(data)
         return
 
 
