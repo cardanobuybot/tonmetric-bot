@@ -34,13 +34,15 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN не задан в переменных окружения")
 
-# ------------------ BINANCE + MEMLANDIA API ------------------
+# ------------------ BINANCE API ------------------
 
 BINANCE_TICKER = "https://api.binance.com/api/v3/ticker/price"
 BINANCE_KLINES = "https://api.binance.com/api/v3/klines"
 SYMBOL = "TONUSDT"
 
-MEMLAND_URL = "https://memelandia.okhlopkov.com/api/leaderboard"
+# ------------------ MEMELANDIA API ------------------
+
+MEMELANDIA_API_URL = "https://memelandia.okhlopkov.com/api/leaderboard"
 
 # ------------------ ЯЗЫК ------------------
 
@@ -180,6 +182,26 @@ def unsubscribe_button_text(lang: str) -> str:
         return "Відписатися"
     else:
         return "Отписаться"
+
+
+# -------- ТЕКСТЫ ДЛЯ МЕМЛЯНДИИ --------
+
+def text_memlandia_header(lang: str) -> str:
+    if lang == "en":
+        return "Top-5 Memelandia 🦄"
+    elif lang == "uk":
+        return "ТОП-5 Мемляндії 🦄"
+    else:
+        return "ТОП-5 Мемляндии 🦄"
+
+
+def text_memlandia_error(lang: str) -> str:
+    if lang == "en":
+        return "Can't get Memelandia data now 🙈"
+    elif lang == "uk":
+        return "Не вдалось отримати дані Мемляндії 🙈"
+    else:
+        return "Не удалось получить данные Мемляндии 🙈"
 
 
 # ------------------ ТЕКСТЫ КНОПОК ------------------
@@ -382,58 +404,6 @@ def get_ton_history(hours: int = 72):
         return [], []
 
 
-# ------------------ МЕМЛЯНДИЯ ------------------
-
-def get_memland_top5() -> str | None:
-    """
-    Тянем JSON с мемляндії и собираем топ-5 по rank.
-    """
-    try:
-        r = requests.get(MEMLAND_URL, timeout=10)
-        data = r.json()
-
-        # Может быть либо {"items": [...]} либо просто [...]
-        if isinstance(data, list):
-            items = data
-        else:
-            items = data.get("items") or data.get("data") or []
-
-        if not isinstance(items, list) or not items:
-            return None
-
-        # сортировка по rank
-        items = sorted(items, key=lambda x: x.get("rank", 999999))
-
-        top5 = items[:5]
-
-        lines = []
-        for i, token in enumerate(top5, start=1):
-            name = token.get("symbol") or token.get("name") or "?"
-            price = token.get("price") or 0
-            mc = token.get("market_cap") or 0
-            change7 = token.get("price_change_d7") or 0
-            holders = token.get("holders") or 0
-            rank = token.get("rank") or i
-
-            arrow = "⬆️" if change7 > 0 else "⬇️" if change7 < 0 else "➖"
-
-            line = (
-                f"#{rank} — {name}\n"
-                f"💰 Цена: {price:.8f} TON\n"
-                f"📊 Капитализация: {mc:,.0f} USD\n"
-                f"👥 Холдера: {holders}\n"
-                f"📈 7d: {arrow} {change7:.2f}%\n"
-                "───────────────"
-            )
-            lines.append(line)
-
-        return "\n".join(lines)
-
-    except Exception as e:
-        print("MEMLAND error:", e)
-        return None
-
-
 # ------------------ ГРАФИК ------------------
 
 def create_ton_chart() -> bytes:
@@ -476,6 +446,145 @@ def create_ton_chart() -> bytes:
     return buf.getvalue()
 
 
+# ------------------ MEMELANDIA HELPERS ------------------
+
+def fetch_memelandia_top(limit: int = 5):
+    """
+    Тянем JSON с мемкоинами и возвращаем список из top-N словарей.
+    Структура API может меняться, поэтому делаем максимально устойчиво.
+    """
+    try:
+        r = requests.get(MEMELANDIA_API_URL, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        print("Memelandia API error:", e)
+        return None
+
+    items = None
+
+    # Вариант 1: сразу список
+    if isinstance(data, list):
+        items = data
+
+    # Вариант 2: объект с полем-списком
+    if items is None and isinstance(data, dict):
+        # чаще всего список лежит в data / items / leaderboard / tokens
+        for key in ("data", "items", "leaderboard", "tokens"):
+            if isinstance(data.get(key), list):
+                items = data[key]
+                break
+        # если не нашли по ключам — берём первый список в объекте
+        if items is None:
+            for v in data.values():
+                if isinstance(v, list):
+                    items = v
+                    break
+
+    if not items:
+        print("Memelandia: no items in response")
+        return None
+
+    # сортируем: если есть rank — по rank; иначе по market_cap
+    if any(isinstance(x, dict) and "rank" in x for x in items):
+        items = sorted(
+            items,
+            key=lambda x: int(x.get("rank") or 10**9),
+        )
+    else:
+        items = sorted(
+            items,
+            key=lambda x: float(x.get("market_cap") or 0),
+            reverse=True,
+        )
+
+    top = items[:limit]
+    result = []
+    for i, coin in enumerate(top, start=1):
+        if not isinstance(coin, dict):
+            continue
+
+        symbol = coin.get("symbol") or "?"
+        price = float(coin.get("price") or 0)
+
+        # изменения за 24ч / 7д — поля могут называться по-разному
+        change_24 = (
+            coin.get("price_change_24h")
+            or coin.get("price_change_d24")
+            or coin.get("price_change_d1")
+            or 0
+        )
+        change_7d = coin.get("price_change_d7") or coin.get("price_change_7d") or 0
+
+        holders = coin.get("holders")
+        market_cap = coin.get("market_cap")
+
+        try:
+            change_24 = float(change_24)
+        except Exception:
+            change_24 = 0.0
+        try:
+            change_7d = float(change_7d)
+        except Exception:
+            change_7d = 0.0
+
+        try:
+            holders = int(holders) if holders is not None else None
+        except Exception:
+            holders = None
+
+        try:
+            market_cap = float(market_cap) if market_cap is not None else None
+        except Exception:
+            market_cap = None
+
+        result.append(
+            {
+                "index": i,
+                "symbol": symbol,
+                "price": price,
+                "change_24": change_24,
+                "change_7d": change_7d,
+                "holders": holders,
+                "market_cap": market_cap,
+            }
+        )
+
+    return result
+
+
+def format_memelandia_top(lang: str, coins: list[dict]) -> str:
+    header = text_memlandia_header(lang)
+    lines = [header, ""]
+
+    for c in coins:
+        idx = c["index"]
+        sym = c["symbol"]
+        price = c["price"]
+
+        ch24 = c["change_24"]
+        ch7 = c["change_7d"]
+        holders = c["holders"]
+        mc = c["market_cap"]
+
+        def fmt_pct(x: float) -> str:
+            sign = "+" if x > 0 else ""
+            return f"{sign}{x:.1f}%"
+
+        line = f"{idx}. {sym}\n"
+        line += f"   price: {price:.6f} $\n"
+        line += f"   24h: {fmt_pct(ch24)}, 7d: {fmt_pct(ch7)}\n"
+
+        if holders is not None:
+            line += f"   holders: {holders}\n"
+        if mc is not None and mc > 0:
+            line += f"   mcap: {mc:,.0f} $\n"
+
+        lines.append(line.rstrip())
+
+    return "\n".join(lines)
+
+
 # ----------- ОТПРАВКА ЦЕНЫ + ГРАФИКА ------------
 
 async def send_price_and_chart(chat_id: int, lang: str, context: ContextTypes.DEFAULT_TYPE):
@@ -503,7 +612,6 @@ async def send_price_and_chart(chat_id: int, lang: str, context: ContextTypes.DE
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    # по умолчанию русский, пока не выбрал
     user_lang[user_id] = "ru"
 
     keyboard = [
@@ -528,15 +636,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = query.message.chat_id
     data = query.data
 
-    # смена языка
     if data.startswith("lang_"):
-        lang = data.split("_", 1)[1]  # en / ru / uk
+        lang = data.split("_", 1)[1]
         user_lang[user_id] = lang
 
         await query.message.reply_text(text_lang_confirm(lang))
         await send_price_and_chart(chat_id, lang, context)
 
-        # показать меню с кнопками
         await context.bot.send_message(
             chat_id,
             text_menu_prompt(lang),
@@ -544,7 +650,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # отписка от уведомлений
     if data == "unsubscribe":
         lang = get_user_language(user_id)
         if has_db():
@@ -637,28 +742,13 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     # Мемляндия
     if text == t["memland"]:
-        if lang == "en":
-            loading = "Loading Memland top-5… 🦄"
-        elif lang == "uk":
-            loading = "Завантажую ТОП-5 Мемляндії… 🦄"
-        else:
-            loading = "Загружаю ТОП-5 Мемляндии… 🦄"
-
-        msg = await update.message.reply_text(loading)
-
-        data = get_memland_top5()
-        if not data:
-            if lang == "en":
-                err = "Can't load Memland data 🙈"
-            elif lang == "uk":
-                err = "Не вдалося завантажити дані Мемляндії 🙈"
-            else:
-                err = "Не удалось загрузить данные Мемляндии 🙈"
-
-            await msg.edit_text(err)
+        top = fetch_memelandia_top(limit=5)
+        if not top:
+            await update.message.reply_text(text_memlandia_error(lang))
             return
 
-        await msg.edit_text(data)
+        msg = format_memelandia_top(lang, top)
+        await update.message.reply_text(msg)
         return
 
 
@@ -736,25 +826,21 @@ async def check_price_job(context: ContextTypes.DEFAULT_TYPE):
 # ------------------ MAIN ------------------
 
 def main():
-    # инициализация БД (если есть DATABASE_URL)
     init_db()
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("price", price_cmd))
     app.add_handler(CommandHandler("chart", chart_cmd))
 
-    # inline-callback'и (языки, отписка)
     app.add_handler(CallbackQueryHandler(callback_handler))
 
-    # обработка текстовых кнопок внизу
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, footer_buttons_handler)
     )
 
-    # фоновая проверка цены каждые 5 минут
+    # уведомления по курсу отключатся сами, если нет DATABASE_URL или JobQueue
     if app.job_queue is not None and has_db():
         app.job_queue.run_repeating(check_price_job, interval=300, first=60)
     else:
