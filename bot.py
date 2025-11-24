@@ -2,6 +2,7 @@ import os
 import io
 from datetime import datetime
 from decimal import Decimal
+from typing import Any, Dict, List, Optional
 
 import requests
 import psycopg2
@@ -16,6 +17,7 @@ from telegram import (
     InlineKeyboardButton,
     ReplyKeyboardMarkup,
     KeyboardButton,
+    InputFile,
 )
 from telegram.ext import (
     ApplicationBuilder,
@@ -42,7 +44,7 @@ SYMBOL = "TONUSDT"
 
 # ------------------ MEMELANDIA API ------------------
 
-MEMELANDIA_API_URL = "https://memelandia.okhlopkov.com/api/leaderboard"
+MEMELANDIA_URL = "https://memelandia.okhlopkov.com/api/leaderboard"
 
 # ------------------ ЯЗЫК ------------------
 
@@ -182,26 +184,6 @@ def unsubscribe_button_text(lang: str) -> str:
         return "Відписатися"
     else:
         return "Отписаться"
-
-
-# -------- ТЕКСТЫ ДЛЯ МЕМЛЯНДИИ --------
-
-def text_memlandia_header(lang: str) -> str:
-    if lang == "en":
-        return "Top-5 Memelandia 🦄"
-    elif lang == "uk":
-        return "ТОП-5 Мемляндії 🦄"
-    else:
-        return "ТОП-5 Мемляндии 🦄"
-
-
-def text_memlandia_error(lang: str) -> str:
-    if lang == "en":
-        return "Can't get Memelandia data now 🙈"
-    elif lang == "uk":
-        return "Не вдалось отримати дані Мемляндії 🙈"
-    else:
-        return "Не удалось получить данные Мемляндии 🙈"
 
 
 # ------------------ ТЕКСТЫ КНОПОК ------------------
@@ -375,7 +357,7 @@ def update_base_price(user_id: int, new_price: float):
 
 # ------------------ ДАННЫЕ TON ------------------
 
-def get_ton_price_usd() -> float | None:
+def get_ton_price_usd() -> Optional[float]:
     try:
         r = requests.get(BINANCE_TICKER, params={"symbol": SYMBOL}, timeout=8)
         data = r.json()
@@ -404,7 +386,7 @@ def get_ton_history(hours: int = 72):
         return [], []
 
 
-# ------------------ ГРАФИК ------------------
+# ------------------ ГРАФИК TON ------------------
 
 def create_ton_chart() -> bytes:
     times, prices = get_ton_history(72)
@@ -446,145 +428,6 @@ def create_ton_chart() -> bytes:
     return buf.getvalue()
 
 
-# ------------------ MEMELANDIA HELPERS ------------------
-
-def fetch_memelandia_top(limit: int = 5):
-    """
-    Тянем JSON с мемкоинами и возвращаем список из top-N словарей.
-    Структура API может меняться, поэтому делаем максимально устойчиво.
-    """
-    try:
-        r = requests.get(MEMELANDIA_API_URL, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-    except Exception as e:
-        print("Memelandia API error:", e)
-        return None
-
-    items = None
-
-    # Вариант 1: сразу список
-    if isinstance(data, list):
-        items = data
-
-    # Вариант 2: объект с полем-списком
-    if items is None and isinstance(data, dict):
-        # чаще всего список лежит в data / items / leaderboard / tokens
-        for key in ("data", "items", "leaderboard", "tokens"):
-            if isinstance(data.get(key), list):
-                items = data[key]
-                break
-        # если не нашли по ключам — берём первый список в объекте
-        if items is None:
-            for v in data.values():
-                if isinstance(v, list):
-                    items = v
-                    break
-
-    if not items:
-        print("Memelandia: no items in response")
-        return None
-
-    # сортируем: если есть rank — по rank; иначе по market_cap
-    if any(isinstance(x, dict) and "rank" in x for x in items):
-        items = sorted(
-            items,
-            key=lambda x: int(x.get("rank") or 10**9),
-        )
-    else:
-        items = sorted(
-            items,
-            key=lambda x: float(x.get("market_cap") or 0),
-            reverse=True,
-        )
-
-    top = items[:limit]
-    result = []
-    for i, coin in enumerate(top, start=1):
-        if not isinstance(coin, dict):
-            continue
-
-        symbol = coin.get("symbol") or "?"
-        price = float(coin.get("price") or 0)
-
-        # изменения за 24ч / 7д — поля могут называться по-разному
-        change_24 = (
-            coin.get("price_change_24h")
-            or coin.get("price_change_d24")
-            or coin.get("price_change_d1")
-            or 0
-        )
-        change_7d = coin.get("price_change_d7") or coin.get("price_change_7d") or 0
-
-        holders = coin.get("holders")
-        market_cap = coin.get("market_cap")
-
-        try:
-            change_24 = float(change_24)
-        except Exception:
-            change_24 = 0.0
-        try:
-            change_7d = float(change_7d)
-        except Exception:
-            change_7d = 0.0
-
-        try:
-            holders = int(holders) if holders is not None else None
-        except Exception:
-            holders = None
-
-        try:
-            market_cap = float(market_cap) if market_cap is not None else None
-        except Exception:
-            market_cap = None
-
-        result.append(
-            {
-                "index": i,
-                "symbol": symbol,
-                "price": price,
-                "change_24": change_24,
-                "change_7d": change_7d,
-                "holders": holders,
-                "market_cap": market_cap,
-            }
-        )
-
-    return result
-
-
-def format_memelandia_top(lang: str, coins: list[dict]) -> str:
-    header = text_memlandia_header(lang)
-    lines = [header, ""]
-
-    for c in coins:
-        idx = c["index"]
-        sym = c["symbol"]
-        price = c["price"]
-
-        ch24 = c["change_24"]
-        ch7 = c["change_7d"]
-        holders = c["holders"]
-        mc = c["market_cap"]
-
-        def fmt_pct(x: float) -> str:
-            sign = "+" if x > 0 else ""
-            return f"{sign}{x:.1f}%"
-
-        line = f"{idx}. {sym}\n"
-        line += f"   price: {price:.6f} $\n"
-        line += f"   24h: {fmt_pct(ch24)}, 7d: {fmt_pct(ch7)}\n"
-
-        if holders is not None:
-            line += f"   holders: {holders}\n"
-        if mc is not None and mc > 0:
-            line += f"   mcap: {mc:,.0f} $\n"
-
-        lines.append(line.rstrip())
-
-    return "\n".join(lines)
-
-
 # ----------- ОТПРАВКА ЦЕНЫ + ГРАФИКА ------------
 
 async def send_price_and_chart(chat_id: int, lang: str, context: ContextTypes.DEFAULT_TYPE):
@@ -606,6 +449,87 @@ async def send_price_and_chart(chat_id: int, lang: str, context: ContextTypes.DE
     except Exception as e:
         print("Chart error:", e)
         await context.bot.send_message(chat_id, text_chart_error(lang))
+
+
+# ------------------ MEMELANDIA: ВСПОМОГАТЕЛЬНЫЕ ------------------
+
+def fetch_memelandia() -> List[Dict[str, Any]]:
+    """Тянем список монет Мемляндии."""
+    try:
+        r = requests.get(MEMELANDIA_URL, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        # предполагаем, что основная масса в data["data"]
+        items = data.get("data") or data.get("tokens") or []
+        if not isinstance(items, list):
+            return []
+        return items
+    except Exception as e:
+        print("Memelandia fetch error:", e)
+        return []
+
+
+def format_change_with_emoji(value: float) -> str:
+    """Подсветка + зелёный, - красный, через эмодзи."""
+    emoji = "🟢" if value >= 0 else "🔴"
+    sign = "+" if value >= 0 else ""
+    return f"{emoji} {sign}{value:.1f}%"
+
+
+def create_memecoin_chart_image(
+    symbol: str,
+    price: float,
+    change_24h: float,
+    change_7d: float,
+    market_cap: float,
+    holders: int,
+) -> bytes:
+    """Рисуем картинку: барчарт 24h/7d + краткая инфа."""
+    plt.style.use("default")
+    fig, ax = plt.subplots(figsize=(6, 4), dpi=200)
+
+    fig.patch.set_facecolor("#0f172a")     # тёмный фон
+    ax.set_facecolor("#020617")
+
+    labels = ["24h", "7d"]
+    values = [change_24h, change_7d]
+    colors = [
+        "#22c55e" if change_24h >= 0 else "#ef4444",
+        "#22c55e" if change_7d >= 0 else "#ef4444",
+    ]
+
+    ax.bar(labels, values, color=colors, width=0.5)
+
+    # линия 0 для наглядности
+    ax.axhline(0, color="#64748b", linewidth=0.8)
+
+    for i, v in enumerate(values):
+        ax.text(
+            i,
+            v + (0.8 if v >= 0 else -0.8),
+            f"{v:+.1f}%",
+            ha="center",
+            va="bottom" if v >= 0 else "top",
+            color="white",
+            fontsize=9,
+        )
+
+    ax.tick_params(colors="#e5e7eb")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_color("#334155")
+    ax.spines["bottom"].set_color("#334155")
+
+    title = f"{symbol}\nprice: {price:.6f} $ | holders: {holders:,}\nmcap: {market_cap:,.0f} $"
+    fig.suptitle(title, color="white", fontsize=10)
+
+    fig.tight_layout(pad=2.0)
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", bbox_inches="tight", facecolor=fig.get_facecolor())
+    plt.close()
+    buf.seek(0)
+    return buf.getvalue()
 
 
 # ------------------ ХЕНДЛЕРЫ ------------------
@@ -636,8 +560,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = query.message.chat_id
     data = query.data
 
+    # смена языка
     if data.startswith("lang_"):
-        lang = data.split("_", 1)[1]
+        lang = data.split("_", 1)[1]  # en / ru / uk
         user_lang[user_id] = lang
 
         await query.message.reply_text(text_lang_confirm(lang))
@@ -650,6 +575,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # отписка от уведомлений
     if data == "unsubscribe":
         lang = get_user_language(user_id)
         if has_db():
@@ -657,6 +583,46 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(text_unsubscribed(lang))
         else:
             await query.message.reply_text(text_subscriptions_disabled(lang))
+        return
+
+    # график конкретной монеты Мемляндии
+    if data.startswith("memcoin_"):
+        try:
+            index = int(data.split("_", 1)[1])
+        except ValueError:
+            return
+
+        lang = get_user_language(user_id)
+
+        items = fetch_memelandia()
+        if not items or index < 0 or index >= len(items):
+            await query.message.reply_text("Не удалось получить данные Мемляндии 🙈")
+            return
+
+        coin = items[index]
+        symbol = str(coin.get("symbol") or coin.get("name") or "COIN")
+        price = float(coin.get("price") or 0.0)
+        ch24 = float(coin.get("price_change_24h") or 0.0)
+        ch7 = float(coin.get("price_change_d7") or 0.0)
+        mcap = float(coin.get("market_cap") or 0.0)
+        holders = int(coin.get("holders") or 0)
+
+        img = create_memecoin_chart_image(symbol, price, ch24, ch7, mcap, holders)
+
+        caption = (
+            f"{symbol}\n"
+            f"price: {price:.6f} $\n"
+            f"24h: {format_change_with_emoji(ch24)}, 7d: {format_change_with_emoji(ch7)}\n"
+            f"holders: {holders:,}\n"
+            f"mcap: {mcap:,.0f} $"
+        )
+
+        await context.bot.send_photo(
+            chat_id=chat_id,
+            photo=img,
+            caption=caption,
+        )
+        return
 
 
 async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -742,17 +708,51 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     # Мемляндия
     if text == t["memland"]:
-        top = fetch_memelandia_top(limit=5)
-        if not top:
-            await update.message.reply_text(text_memlandia_error(lang))
+        items = fetch_memelandia()
+        if not items:
+            await update.message.reply_text("Не могу получить данные Мемляндии 🙈")
             return
 
-        msg = format_memelandia_top(lang, top)
-        await update.message.reply_text(msg)
+        top = items[:5]
+
+        lines = ["ТОП-5 Мемляндии 🦄", ""]
+        for idx, coin in enumerate(top, start=1):
+            symbol = str(coin.get("symbol") or coin.get("name") or f"#{idx}")
+            price = float(coin.get("price") or 0.0)
+            ch24 = float(coin.get("price_change_24h") or 0.0)
+            ch7 = float(coin.get("price_change_d7") or 0.0)
+            holders = int(coin.get("holders") or 0)
+            mcap = float(coin.get("market_cap") or 0.0)
+
+            lines.append(
+                f"{idx}. {symbol}\n"
+                f"price: {price:.6f} $\n"
+                f"24h: {format_change_with_emoji(ch24)}, 7d: {format_change_with_emoji(ch7)}\n"
+                f"holders: {holders:,}\n"
+                f"mcap: {mcap:,.0f} $\n"
+            )
+
+        text_out = "\n".join(lines).rstrip()
+
+        keyboard = [
+            [
+                InlineKeyboardButton("1", callback_data="memcoin_0"),
+                InlineKeyboardButton("2", callback_data="memcoin_1"),
+                InlineKeyboardButton("3", callback_data="memcoin_2"),
+                InlineKeyboardButton("4", callback_data="memcoin_3"),
+                InlineKeyboardButton("5", callback_data="memcoin_4"),
+            ]
+        ]
+
+        await update.message.reply_text(
+            text_out + "\nНажми на номер, чтобы увидеть график 24h/7d 📊",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
         return
 
 
 # отдельные команды (если кто-то захочет писать руками)
+
 async def price_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
@@ -840,7 +840,6 @@ def main():
         MessageHandler(filters.TEXT & ~filters.COMMAND, footer_buttons_handler)
     )
 
-    # уведомления по курсу отключатся сами, если нет DATABASE_URL или JobQueue
     if app.job_queue is not None and has_db():
         app.job_queue.run_repeating(check_price_job, interval=300, first=60)
     else:
