@@ -1,7 +1,6 @@
 import os
 import io
 from datetime import datetime
-from decimal import Decimal
 
 import requests
 import psycopg2
@@ -182,6 +181,39 @@ def unsubscribe_button_text(lang: str) -> str:
         return "Відписатися"
     else:
         return "Отписаться"
+
+
+def subscribe_button_text(lang: str) -> str:
+    if lang == "en":
+        return "Subscribe"
+    elif lang == "uk":
+        return "Підписатися"
+    else:
+        return "Подписаться"
+
+
+def text_notify_about(lang: str) -> str:
+    """Текст, который показывается при нажатии на кнопку «Уведомления»,
+    если пользователь ещё не подписан.
+    """
+    if lang == "en":
+        return (
+            "We will notify you when TON price changes more than 10% "
+            "(up or down) from the current price.\n\n"
+            "Press «Subscribe» to start receiving such notifications."
+        )
+    elif lang == "uk":
+        return (
+            "Ми повідомимо, коли ціна TON зміниться більш ніж на 10% "
+            "(вгору або вниз) від поточної ціни.\n\n"
+            "Натисніть «Підписатися», щоб отримувати такі сповіщення."
+        )
+    else:
+        return (
+            "Уведомим об изменении цены TONCOIN более чем на 10% "
+            "(вверх или вниз) от текущей цены.\n\n"
+            "Нажмите «Подписаться», чтобы получать такие уведомления."
+        )
 
 
 # -------- ТЕКСТЫ ДЛЯ МЕМЛЯНДИИ --------
@@ -406,8 +438,8 @@ def get_ton_history(hours: int = 72):
 
 # ------------------ ГРАФИК TON ------------------
 
-def create_ton_chart(hours: int = 72) -> bytes:
-    times, prices = get_ton_history(hours)
+def create_ton_chart() -> bytes:
+    times, prices = get_ton_history(72)
     if not times or not prices:
         raise RuntimeError("No chart data")
 
@@ -449,9 +481,6 @@ def create_ton_chart(hours: int = 72) -> bytes:
 # ------------------ MEMELANDIA HELPERS ------------------
 
 def fetch_memelandia_top(limit: int = 5):
-    """
-    Тянем JSON с мемкоинами и возвращаем список из top-N словарей.
-    """
     try:
         r = requests.get(MEMELANDIA_API_URL, timeout=10)
         r.raise_for_status()
@@ -565,70 +594,17 @@ def format_memelandia_top(lang: str, coins: list[dict]) -> str:
             return f"{sign}{x:.1f}%"
 
         line = f"{idx}. {sym}\n"
-        line += f"   price: {price:.6f} $\n"
-        line += f"   24h: {fmt_pct(ch24)}, 7d: {fmt_pct(ch7)}\n"
+        line += f"price: {price:.6f} $\n"
+        line += f"24h: {fmt_pct(ch24)}, 7d: {fmt_pct(ch7)}\n"
 
         if holders is not None:
-            line += f"   holders: {holders}\n"
+            line += f"holders: {holders}\n"
         if mc is not None and mc > 0:
-            line += f"   mcap: {mc:,.0f} $\n"
+            line += f"mcap: {mc:,.0f} $\n"
 
         lines.append(line.rstrip())
 
     return "\n".join(lines)
-
-
-# ---- ГРАФИК ДЛЯ МЕМЛЯНДИИ (ТОП-5, 24h %) ----
-
-def create_memelandia_chart(coins: list[dict]) -> bytes:
-    """
-    Строим горизонтальный бар-чарт по 24h % change для топ-5 мемкоинов.
-    Зелёный — рост, красный — падение.
-    """
-    if not coins:
-        raise RuntimeError("No memelandia data")
-
-    names = [c["symbol"] for c in coins]
-    values = [c["change_24"] for c in coins]
-
-    # цвета: зелёный если плюс, красный если минус
-    colors = ["#16A34A" if v >= 0 else "#DC2626" for v in values]
-
-    plt.style.use("default")
-    fig, ax = plt.subplots(figsize=(8, 5), dpi=220)
-
-    y_pos = list(range(len(names)))
-    ax.barh(y_pos, values, color=colors)
-
-    ax.set_yticks(y_pos)
-    ax.set_yticklabels(names)
-
-    ax.axvline(0, color="#9CA3AF", linewidth=1)
-
-    ax.set_xlabel("24h %")
-    ax.set_title("Memelandia Top-5 — 24h change")
-
-    ax.grid(axis="x", linestyle="--", linewidth=0.4, alpha=0.4)
-
-    # подписи процентов на барах
-    for i, v in enumerate(values):
-        sign = "+" if v > 0 else ""
-        ax.text(
-            v,
-            i,
-            f" {sign}{v:.1f}%",
-            va="center",
-            ha="left" if v >= 0 else "right",
-            fontsize=8,
-        )
-
-    fig.tight_layout()
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", bbox_inches="tight")
-    plt.close()
-    buf.seek(0)
-    return buf.getvalue()
 
 
 # ----------- ОТПРАВКА ЦЕНЫ + ГРАФИКА TON ------------
@@ -642,7 +618,7 @@ async def send_price_and_chart(chat_id: int, lang: str, context: ContextTypes.DE
     await context.bot.send_message(chat_id, text_price_ok(lang, price))
 
     try:
-        img = create_ton_chart(72)
+        img = create_ton_chart()
         await context.bot.send_photo(
             chat_id,
             img,
@@ -674,26 +650,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def send_chart_with_range(chat_id: int, lang: str, hours: int, context: ContextTypes.DEFAULT_TYPE):
-    info = await context.bot.send_message(chat_id, text_chart_build(lang))
-    try:
-        img = create_ton_chart(hours)
-        await context.bot.send_photo(
-            chat_id,
-            img,
-            caption="[Binance](https://www.binance.com/referral/earn-together/refer2earn-usdc/claim?hl=en&ref=GRO_28502_1C1WM&utm_source=default)",
-            parse_mode="Markdown",
-        )
-    except Exception as e:
-        print("Chart error:", e)
-        await context.bot.send_message(chat_id, text_chart_error(lang))
-    finally:
-        try:
-            await info.delete()
-        except Exception:
-            pass
-
-
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -702,7 +658,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = query.message.chat_id
     data = query.data
 
-    # выбор языка
+    # смена языка
     if data.startswith("lang_"):
         lang = data.split("_", 1)[1]
         user_lang[user_id] = lang
@@ -717,24 +673,52 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # выбор периода графика TON
-    if data.startswith("chart_"):
+    # подписка на уведомления (через инлайн кнопку)
+    if data == "notif_subscribe":
         lang = get_user_language(user_id)
+
+        if not has_db():
+            await query.message.reply_text(text_subscriptions_disabled(lang))
+            return
+
+        current_price = get_ton_price_usd()
+        if current_price is None:
+            await query.message.reply_text(text_price_error(lang))
+            return
+
+        subscribe_user_db(user_id, lang, current_price)
+
+        text_reply = text_subscribed(lang, current_price)
+        kb = InlineKeyboardMarkup(
+            [[InlineKeyboardButton(unsubscribe_button_text(lang), callback_data="notif_unsubscribe")]]
+        )
+
         try:
-            hours = int(data.split("_", 1)[1])
+            await query.edit_message_text(text=text_reply, reply_markup=kb)
         except Exception:
-            hours = 72
-        await send_chart_with_range(chat_id, lang, hours, context)
+            await query.message.reply_text(text_reply, reply_markup=kb)
         return
 
-    # отписка
-    if data == "unsubscribe":
+    # отписка (новый и старый callback_data)
+    if data in ("notif_unsubscribe", "unsubscribe"):
         lang = get_user_language(user_id)
-        if has_db():
-            unsubscribe_user_db(user_id)
-            await query.message.reply_text(text_unsubscribed(lang))
-        else:
+
+        if not has_db():
             await query.message.reply_text(text_subscriptions_disabled(lang))
+            return
+
+        unsubscribe_user_db(user_id)
+
+        text_reply = text_unsubscribed(lang)
+        kb = InlineKeyboardMarkup(
+            [[InlineKeyboardButton(subscribe_button_text(lang), callback_data="notif_subscribe")]]
+        )
+
+        try:
+            await query.edit_message_text(text=text_reply, reply_markup=kb)
+        except Exception:
+            await query.message.reply_text(text_reply, reply_markup=kb)
+        return
 
 
 async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -752,26 +736,24 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(text_price_error(lang))
         return
 
-    # График — выбор периода
+    # График
     if text == t["chart"]:
-        if lang == "en":
-            caption = "Choose range:"
-        elif lang == "uk":
-            caption = "Оберіть період:"
-        else:
-            caption = "Выберите период:"
-
-        kb = [
-            [
-                InlineKeyboardButton("24h", callback_data="chart_24"),
-                InlineKeyboardButton("72h", callback_data="chart_72"),
-                InlineKeyboardButton("7d", callback_data="chart_168"),
-            ]
-        ]
-        await update.message.reply_text(
-            caption,
-            reply_markup=InlineKeyboardMarkup(kb),
-        )
+        info = await update.message.reply_text(text_chart_build(lang))
+        try:
+            img = create_ton_chart()
+            await update.message.reply_photo(
+                img,
+                caption="[Binance](https://www.binance.com/referral/earn-together/refer2earn-usdc/claim?hl=en&ref=GRO_28502_1C1WM&utm_source=default)",
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            print("Chart error:", e)
+            await update.message.reply_text(text_chart_error(lang))
+        finally:
+            try:
+                await info.delete()
+            except Exception:
+                pass
         return
 
     # Уведомления
@@ -780,22 +762,25 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(text_subscriptions_disabled(lang))
             return
 
-        current_price = get_ton_price_usd()
-        if current_price is None:
-            await update.message.reply_text(text_price_error(lang))
-            return
-
         sub = get_subscription(user_id)
+
         if sub and sub["active"]:
-            await update.message.reply_text(text_already_subscribed(lang))
-        else:
-            subscribe_user_db(user_id, lang, current_price)
-            await update.message.reply_text(
-                text_subscribed(lang, current_price),
-                reply_markup=InlineKeyboardMarkup(
-                    [[InlineKeyboardButton(unsubscribe_button_text(lang), callback_data="unsubscribe")]]
-                ),
+            base = sub["base_price"]
+            if base is None:
+                # если по какой-то причине нет базы, возьмём текущую цену
+                p = get_ton_price_usd() or 0
+                base = p
+            msg = text_subscribed(lang, base)
+            kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton(unsubscribe_button_text(lang), callback_data="notif_unsubscribe")]]
             )
+        else:
+            msg = text_notify_about(lang)
+            kb = InlineKeyboardMarkup(
+                [[InlineKeyboardButton(subscribe_button_text(lang), callback_data="notif_subscribe")]]
+            )
+
+        await update.message.reply_text(msg, reply_markup=kb)
         return
 
     # Купить Stars
@@ -827,19 +812,8 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(text_memlandia_error(lang))
             return
 
-        # текстовый топ
         msg = format_memelandia_top(lang, top)
         await update.message.reply_text(msg)
-
-        # пробуем отправить график
-        try:
-            img = create_memelandia_chart(top)
-            await update.message.reply_photo(
-                img,
-                caption="Top-5 Memelandia — 24h %",
-            )
-        except Exception as e:
-            print("Memelandia chart error:", e)
         return
 
 
@@ -858,24 +832,22 @@ async def chart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
 
-    if lang == "en":
-        caption = "Choose range:"
-    elif lang == "uk":
-        caption = "Оберіть період:"
-    else:
-        caption = "Выберите период:"
-
-    kb = [
-        [
-            InlineKeyboardButton("24h", callback_data="chart_24"),
-            InlineKeyboardButton("72h", callback_data="chart_72"),
-            InlineKeyboardButton("7d", callback_data="chart_168"),
-        ]
-    ]
-    await update.message.reply_text(
-        caption,
-        reply_markup=InlineKeyboardMarkup(kb),
-    )
+    info = await update.message.reply_text(text_chart_build(lang))
+    try:
+        img = create_ton_chart()
+        await update.message.reply_photo(
+            img,
+            caption="[Binance](https://www.binance.com/referral/earn-together/refer2earn-usdc/claim?hl=en&ref=GRO_28502_1C1WM&utm_source=default)",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        print("Chart error:", e)
+        await update.message.reply_text(text_chart_error(lang))
+    finally:
+        try:
+            await info.delete()
+        except Exception:
+            pass
 
 
 # ------------------ ФОНОВЫЙ ДЖОБ ------------------
