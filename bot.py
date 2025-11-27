@@ -32,7 +32,7 @@ from telegram.ext import (
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 CRYPTOPAY_API_TOKEN = os.getenv("CRYPTOPAY_API_TOKEN")
-
+                      or os.getenv("CRYPTOBOT_TOKEN")
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN не задан в переменных окружения")
 
