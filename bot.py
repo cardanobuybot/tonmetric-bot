@@ -30,6 +30,7 @@ from telegram.ext import (
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
+CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")
 
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN не задан в переменных окружения")
@@ -43,6 +44,12 @@ SYMBOL = "TONUSDT"
 # ------------------ MEMELANDIA API ------------------
 
 MEMELANDIA_API_URL = "https://memelandia.okhlopkov.com/api/leaderboard"
+
+# ------------------ CRYPTOBOT ------------------
+
+CRYPTOBOT_API_URL = "https://pay.crypt.bot/api"
+REF_PERCENT = 0.10  # 10% тикетов рефералу
+TICKET_RATE = 1.0   # 1 TON = 1 тикет
 
 # ------------------ ЯЗЫК ------------------
 
@@ -211,25 +218,32 @@ BUTTON_TEXTS = {
         "price": "Курс",
         "chart": "График",
         "notify": "Уведомления",
-        "buy_stars": "Купить Stars ⭐",
+        # "buy_stars": "Купить Stars ⭐",  # временно не используем
         "wallet": "Кошелёк",
         "memland": "Мемляндия🦄",
+        "buy_tickets": "Купить тикеты 🎟",
+        "my_tickets": "Мои тикеты",
+        "ref_link": "Реф. ссылка",
     },
     "en": {
         "price": "Rate",
         "chart": "Chart",
         "notify": "Notifications",
-        "buy_stars": "Buy Stars ⭐",
         "wallet": "Wallet",
         "memland": "Memlandia🦄",
+        "buy_tickets": "Buy tickets 🎟",
+        "my_tickets": "My tickets",
+        "ref_link": "Ref link",
     },
     "uk": {
         "price": "Курс",
         "chart": "Графік",
         "notify": "Сповіщення",
-        "buy_stars": "Купити Stars ⭐",
         "wallet": "Гаманець",
         "memland": "Мемляндія🦄",
+        "buy_tickets": "Купити тікети 🎟",
+        "my_tickets": "Мої тікети",
+        "ref_link": "Реф. посилання",
     },
 }
 
@@ -244,9 +258,10 @@ def footer_buttons(lang: str) -> ReplyKeyboardMarkup:
         [KeyboardButton(t["price"])],
         [KeyboardButton(t["chart"])],
         [KeyboardButton(t["notify"])],
-        [KeyboardButton(t["buy_stars"])],
         [KeyboardButton(t["wallet"])],
         [KeyboardButton(t["memland"])],
+        [KeyboardButton(t["buy_tickets"])],
+        [KeyboardButton(t["my_tickets"]), KeyboardButton(t["ref_link"])],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
@@ -265,11 +280,12 @@ def get_conn():
 
 def init_db():
     if not DATABASE_URL:
-        print("DATABASE_URL не задана — подписки отключены")
+        print("DATABASE_URL не задана — подписки/ревардка отключены")
         return
 
     with get_conn() as conn:
         with conn.cursor() as cur:
+            # Подписчики на курс TON
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS subscribers (
@@ -282,8 +298,39 @@ def init_db():
                 );
                 """
             )
-    print("DB: subscribers table ensured")
 
+            # Пользователи ревард-программы
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS reward_users (
+                    user_id      BIGINT PRIMARY KEY,
+                    referrer_id  BIGINT,
+                    tickets      NUMERIC NOT NULL DEFAULT 0,
+                    total_ton    NUMERIC NOT NULL DEFAULT 0,
+                    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """
+            )
+
+            # Инвойсы CryptoBot
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS reward_invoices (
+                    id           SERIAL PRIMARY KEY,
+                    invoice_id   BIGINT UNIQUE NOT NULL,
+                    user_id      BIGINT NOT NULL,
+                    amount_ton   NUMERIC NOT NULL,
+                    tickets      NUMERIC NOT NULL,
+                    status       TEXT NOT NULL,
+                    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """
+            )
+
+    print("DB: tables ensured")
+
+
+# ---- подписки на курс (как было) ----
 
 def subscribe_user_db(user_id: int, lang: str, base_price: float):
     if not has_db():
@@ -449,10 +496,6 @@ def create_ton_chart() -> bytes:
 # ------------------ MEMELANDIA HELPERS ------------------
 
 def fetch_memelandia_top(limit: int = 5):
-    """
-    Тянем JSON с мемкоинами и возвращаем список из top-N словарей.
-    Структура API может меняться, поэтому делаем максимально устойчиво.
-    """
     try:
         r = requests.get(MEMELANDIA_API_URL, timeout=10)
         r.raise_for_status()
@@ -463,11 +506,9 @@ def fetch_memelandia_top(limit: int = 5):
 
     items = None
 
-    # Вариант 1: сразу список
     if isinstance(data, list):
         items = data
 
-    # Вариант 2: объект с полем-списком
     if items is None and isinstance(data, dict):
         for key in ("data", "items", "leaderboard", "tokens"):
             if isinstance(data.get(key), list):
@@ -483,7 +524,6 @@ def fetch_memelandia_top(limit: int = 5):
         print("Memelandia: no items in response")
         return None
 
-    # сортируем: если есть rank — по rank; иначе по market_cap
     if any(isinstance(x, dict) and "rank" in x for x in items):
         items = sorted(
             items,
@@ -582,51 +622,32 @@ def format_memelandia_top(lang: str, coins: list[dict]) -> str:
     return "\n".join(lines)
 
 
-# ----------- ГРАФИК ДЛЯ МЕМЛЯНДИИ ------------
-
 def create_memelandia_chart(coins: list[dict]) -> bytes:
-    """
-    Строим горизонтальный бар-чарт по изменениям за 24 часа.
-    """
-    if not coins:
-        raise RuntimeError("No memelandia data")
+    labels = [c["symbol"] for c in coins]
+    values = [c["change_24"] for c in coins]
 
-    names = [c["symbol"] for c in coins]
-    changes = [c["change_24"] for c in coins]
-
-    y_pos = list(range(len(names)))
-
-    plt.style.use("default")
-    fig, ax = plt.subplots(figsize=(9, 6), dpi=250)
-
+    fig, ax = plt.subplots(figsize=(9, 5), dpi=250)
     fig.patch.set_facecolor("#FFFFFF")
     ax.set_facecolor("#F9FAFB")
 
-    # зелёный для роста, красный для падения
-    colors = ["#16A34A" if v >= 0 else "#DC2626" for v in changes]
+    y_pos = range(len(labels))
+    colors = ["#10B981" if v >= 0 else "#EF4444" for v in values]
 
-    ax.barh(y_pos, changes, color=colors)
+    ax.barh(y_pos, values, tick_label=labels, color=colors)
+    ax.axvline(0, color="#9CA3AF", linewidth=0.8)
 
-    ax.set_yticks(y_pos)
-    ax.set_yticklabels(names)
-    ax.invert_yaxis()  # чтобы 1-е место было сверху
-
-    ax.set_xlabel("24h %")
-    ax.set_title("Memelandia Top-5 — 24h change")
-
-    ax.grid(axis="x", linewidth=0.3, alpha=0.3)
-
-    # подписи процентов на концах баров
-    for i, v in enumerate(changes):
-        text = f"{v:+.1f}%"
+    for i, v in enumerate(values):
         ax.text(
             v + (0.3 if v >= 0 else -0.3),
             i,
-            text,
+            f"{v:+.1f}%",
             va="center",
             ha="left" if v >= 0 else "right",
             fontsize=8,
         )
+
+    ax.set_xlabel("24h %")
+    ax.set_title("Memelandia Top-5 — 24h change")
 
     fig.tight_layout(pad=1.5)
 
@@ -637,7 +658,7 @@ def create_memelandia_chart(coins: list[dict]) -> bytes:
     return buf.getvalue()
 
 
-# ----------- ОТПРАВКА ЦЕНЫ + ГРАФИКА TON ------------
+# ----------- ОТПРАВКА ЦЕНЫ + ГРАФИКА ------------
 
 async def send_price_and_chart(chat_id: int, lang: str, context: ContextTypes.DEFAULT_TYPE):
     price = get_ton_price_usd()
@@ -660,11 +681,89 @@ async def send_price_and_chart(chat_id: int, lang: str, context: ContextTypes.DE
         await context.bot.send_message(chat_id, text_chart_error(lang))
 
 
+# ------------------ CRYPTOBOT HELPERS ------------------
+
+def cryptobot_headers():
+    if not CRYPTOBOT_TOKEN:
+        raise RuntimeError("CRYPTOBOT_TOKEN not set")
+    return {
+        "Crypto-Pay-API-Token": CRYPTOBOT_TOKEN,
+        "Content-Type": "application/json",
+    }
+
+
+def create_invoice_ton(amount_ton: float, payload: str) -> dict | None:
+    try:
+        r = requests.post(
+            f"{CRYPTOBOT_API_URL}/createInvoice",
+            headers=cryptobot_headers(),
+            json={
+                "asset": "TON",
+                "amount": str(amount_ton),
+                "payload": payload,
+            },
+            timeout=10,
+        )
+        data = r.json()
+        if not data.get("ok"):
+            print("CryptoBot createInvoice error:", data)
+            return None
+        return data["result"]
+    except Exception as e:
+        print("CryptoBot error:", e)
+        return None
+
+
+def get_invoice(invoice_id: int) -> dict | None:
+    try:
+        r = requests.post(
+            f"{CRYPTOBOT_API_URL}/getInvoices",
+            headers=cryptobot_headers(),
+            json={"invoice_ids": [invoice_id]},
+            timeout=10,
+        )
+        data = r.json()
+        if not data.get("ok"):
+            print("CryptoBot getInvoices error:", data)
+            return None
+        items = data["result"]["items"]
+        return items[0] if items else None
+    except Exception as e:
+        print("CryptoBot error:", e)
+        return None
+
+
 # ------------------ ХЕНДЛЕРЫ ------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    user = update.effective_user
+    user_id = user.id
+
+    # язык по умолчанию
     user_lang[user_id] = "ru"
+
+    # рефералка: /start 123456789
+    referrer_id = None
+    if context.args:
+        try:
+            referrer_id = int(context.args[0])
+            if referrer_id == user_id:
+                referrer_id = None
+        except Exception:
+            referrer_id = None
+
+    # записываем пользователя в reward_users
+    if has_db():
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO reward_users (user_id, referrer_id)
+                    VALUES (%s, %s)
+                    ON CONFLICT (user_id) DO NOTHING;
+                    """,
+                    (user_id, referrer_id),
+                )
 
     keyboard = [
         [
@@ -688,6 +787,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = query.message.chat_id
     data = query.data
 
+    # выбор языка
     if data.startswith("lang_"):
         lang = data.split("_", 1)[1]
         user_lang[user_id] = lang
@@ -702,6 +802,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # отписка от уведомлений
     if data == "unsubscribe":
         lang = get_user_language(user_id)
         if has_db():
@@ -709,6 +810,83 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(text_unsubscribed(lang))
         else:
             await query.message.reply_text(text_subscriptions_disabled(lang))
+        return
+
+    # проверка инвойса CryptoBot
+    if data.startswith("check_invoice:"):
+        _, inv_id_str = data.split(":", 1)
+        try:
+            invoice_id = int(inv_id_str)
+        except ValueError:
+            await query.message.reply_text("Некорректный инвойс.")
+            return
+
+        inv = get_invoice(invoice_id)
+        if not inv:
+            await query.message.reply_text("Не удалось получить статус оплаты 🙈")
+            return
+
+        status = inv.get("status")
+        if status != "paid":
+            await query.message.reply_text("Пока не оплачено. Попробуй позже.")
+            return
+
+        tickets = 0
+        ref_award = 0
+        amount_ton = 0.0
+
+        if has_db():
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT user_id, amount_ton, tickets, status FROM reward_invoices WHERE invoice_id = %s;",
+                        (invoice_id,),
+                    )
+                    row = cur.fetchone()
+
+                    if not row:
+                        await query.message.reply_text("Инвойс не найден в базе.")
+                        return
+
+                    db_user_id, amount_ton, tickets, db_status = row
+                    if db_status == "paid":
+                        await query.message.reply_text("Оплата уже учтена ✅")
+                        return
+
+                    # обновляем тикеты пользователя
+                    cur.execute(
+                        """
+                        UPDATE reward_users
+                        SET tickets = tickets + %s,
+                            total_ton = total_ton + %s
+                        WHERE user_id = %s
+                        RETURNING referrer_id;
+                        """,
+                        (tickets, amount_ton, db_user_id),
+                    )
+                    res = cur.fetchone()
+                    referrer_id = res[0] if res else None
+
+                    # помечаем инвойс как оплаченный
+                    cur.execute(
+                        "UPDATE reward_invoices SET status = 'paid' WHERE invoice_id = %s;",
+                        (invoice_id,),
+                    )
+
+                    # тикеты рефералу
+                    if referrer_id:
+                        ref_award = tickets * REF_PERCENT
+                        cur.execute(
+                            "UPDATE reward_users SET tickets = tickets + %s WHERE user_id = %s;",
+                            (ref_award, referrer_id),
+                        )
+
+        msg = f"Оплата получена ✅\nТебе начислено: {tickets:.0f} тикетов."
+        if ref_award:
+            msg += f"\nТвоему рефералу начислено: {ref_award:.0f} тикетов."
+
+        await query.message.reply_text(msg)
+        return
 
 
 async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -726,7 +904,7 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text(text_price_error(lang))
         return
 
-    # График TON
+    # График
     if text == t["chart"]:
         info = await update.message.reply_text(text_chart_build(lang))
         try:
@@ -770,17 +948,6 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
             )
         return
 
-    # Купить Stars
-    if text == t["buy_stars"]:
-        if lang == "en":
-            msg = "Open TON Stars: https://tonstars.io"
-        elif lang == "uk":
-            msg = "Відкрийте TON Stars: https://tonstars.io"
-        else:
-            msg = "Откройте TON Stars: https://tonstars.io"
-        await update.message.reply_text(msg)
-        return
-
     # Кошелёк
     if text == t["wallet"]:
         if lang == "en":
@@ -800,17 +967,90 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
             return
 
         msg = format_memelandia_top(lang, top)
-        await update.message.reply_text(msg)
 
-        # пытаемся отправить график
+        # график 24h
         try:
             img = create_memelandia_chart(top)
-            await update.message.reply_photo(
-                img,
-                caption="Top-5 Memelandia — 24h %",
-            )
+            await update.message.reply_photo(img, caption=msg)
         except Exception as e:
             print("Memelandia chart error:", e)
+            await update.message.reply_text(msg)
+        return
+
+    # Купить тикеты (через CryptoBot)
+    if text == t["buy_tickets"]:
+        if not CRYPTOBOT_TOKEN:
+            await update.message.reply_text("Оплата временно недоступна 🙈")
+            return
+
+        amount_ton = 1.0  # фикс: 1 TON
+        tickets = amount_ton * TICKET_RATE
+
+        payload = f"user:{user_id}"
+        inv = create_invoice_ton(amount_ton, payload)
+        if not inv:
+            await update.message.reply_text("Не удалось создать счёт в CryptoBot 🙈")
+            return
+
+        invoice_id = inv["invoice_id"]
+        pay_url = inv["pay_url"]
+
+        if has_db():
+            with get_conn() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO reward_invoices (invoice_id, user_id, amount_ton, tickets, status)
+                        VALUES (%s, %s, %s, %s, 'pending')
+                        ON CONFLICT (invoice_id) DO NOTHING;
+                        """,
+                        (invoice_id, user_id, amount_ton, tickets),
+                    )
+
+        keyboard = InlineKeyboardMarkup(
+            [
+                [InlineKeyboardButton("Оплатить в CryptoBot", url=pay_url)],
+                [InlineKeyboardButton("Проверить оплату", callback_data=f"check_invoice:{invoice_id}")],
+            ]
+        )
+
+        await update.message.reply_text(
+            f"Счёт создан ✅\n\n"
+            f"Сумма: {amount_ton:.2f} TON\n"
+            f"Тикетов: {tickets:.0f}\n\n"
+            f"После оплаты нажми «Проверить оплату».",
+            reply_markup=keyboard,
+        )
+        return
+
+    # Мои тикеты
+    if text == t["my_tickets"]:
+        if not has_db():
+            await update.message.reply_text("Хранилище тикетов временно недоступно 🙈")
+            return
+
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT tickets, total_ton FROM reward_users WHERE user_id = %s;",
+                    (user_id,),
+                )
+                row = cur.fetchone()
+
+        if not row:
+            await update.message.reply_text("У тебя пока нет тикетов.")
+            return
+
+        tickets, total_ton = row
+        await update.message.reply_text(
+            f"Твои тикеты: {float(tickets):.0f}\nВсего куплено: {float(total_ton):.2f} TON"
+        )
+        return
+
+    # Реф. ссылка
+    if text == t["ref_link"]:
+        link = f"https://t.me/{context.bot.username}?start={user_id}"
+        await update.message.reply_text(f"Твоя реф. ссылка:\n\n{link}")
         return
 
 
