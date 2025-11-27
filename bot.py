@@ -31,13 +31,13 @@ from telegram.ext import (
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
-CRYPTOPAY_API_TOKEN = os.getenv("CRYPTOPAY_API_TOKEN")
-                      or os.getenv("CRYPTOBOT_TOKEN")
+CRYPTOBOT_TOKEN = os.getenv("CRYPTOBOT_TOKEN")
+
 if not BOT_TOKEN:
     raise RuntimeError("BOT_TOKEN не задан в переменных окружения")
 
-if not CRYPTOPAY_API_TOKEN:
-    print("WARN: CRYPTOPAY_API_TOKEN не задан, покупка тикетов не будет работать")
+if not CRYPTOBOT_TOKEN:
+    print("WARN: CRYPTOBOT_TOKEN не задан, покупка тикетов не будет работать")
 
 # ------------------ BINANCE API ------------------
 
@@ -785,12 +785,12 @@ async def send_price_and_chart(chat_id: int, lang: str, context: ContextTypes.DE
 # ------------------ CryptoPay helpers ------------------
 
 def cryptopay_request(method: str, data: Optional[dict] = None) -> dict:
-    if not CRYPTOPAY_API_TOKEN:
-        raise RuntimeError("CRYPTOPAY_API_TOKEN not set")
+    if not CRYPTOBOT_TOKEN:
+        raise RuntimeError("CRYPTOBOT_TOKEN not set")
 
     url = CRYPTOPAY_API_URL + method
     headers = {
-        "Crypto-Pay-API-Token": CRYPTOPAY_API_TOKEN,
+        "Crypto-Pay-API-Token": CRYPTOBOT_TOKEN,
         "Content-Type": "application/json",
     }
     try:
@@ -995,7 +995,7 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
             )
         return
 
-    # Кошелёк (твоя рефка на CryptoBot / Tonkeeper — как было)
+    # Кошелёк
     if text == t["wallet"]:
         if lang == "en":
             msg = "Open wallet: http://t.me/send?start=r-71wfg"
@@ -1016,7 +1016,6 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
         msg = format_memelandia_top(lang, top)
         await update.message.reply_text(msg)
 
-        # картинка
         try:
             img = create_memelandia_bar_chart(top)
             await update.message.reply_photo(img, caption="Top-5 Memelandia — 24h %")
@@ -1026,7 +1025,7 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     # Купить тикеты
     if text == t["buy_tickets"]:
-        if not (has_db() and CRYPTOPAY_API_TOKEN):
+        if not (has_db() and CRYPTOBOT_TOKEN):
             await update.message.reply_text("Покупка тикетов временно недоступна 🙈")
             return
 
@@ -1131,7 +1130,6 @@ async def my_tickets_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def buy_tickets_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # просто продублируем поведение кнопки
     fake_update = update
     await footer_buttons_handler(fake_update, context)
 
