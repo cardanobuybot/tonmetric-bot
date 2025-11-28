@@ -819,11 +819,30 @@ def create_ticket_invoice_api(user_id: int, tickets: int, amount_ton: float) -> 
 
 
 def get_invoice_api(invoice_id: int) -> dict:
+    """
+    Получаем один инвойс из CryptoPay.
+
+    В старой рабочей версии бота структура ответа была:
+      { "ok": true, "result": { "items": [ { ...invoice... } ], "count": 1 } }
+
+    Сейчас cryptopay_request уже возвращает поле "result", поэтому здесь
+    разбираем так же: берём result["items"][0]. На всякий случай поддерживаем
+    вариант, когда result — список инвойсов.
+    """
     data = {"invoice_ids": [invoice_id]}
     res = cryptopay_request("getInvoices", data)
+
+    # Классический формат: dict с ключом "items"
+    if isinstance(res, dict):
+        items = res.get("items") or res.get("invoices") or []
+        if isinstance(items, list) and items:
+            return items[0]
+
+    # Запасной вариант: result уже список инвойсов
     if isinstance(res, list) and res:
         return res[0]
-    raise RuntimeError("Invoice not found in CryptoPay")
+
+    raise RuntimeError(f"Invoice not found in CryptoPay, result={res!r}")
 
 
 # ------------------ ХЕНДЛЕРЫ ------------------
