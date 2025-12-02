@@ -54,6 +54,10 @@ MEMELANDIA_API_URL = "https://memelandia.okhlopkov.com/api/leaderboard"
 
 CRYPTOPAY_API_URL = "https://pay.crypt.bot/api/"
 
+# ------------------ Gold VISA URL ------------------
+
+GOLD_VISA_URL = "https://t.me/teledevrobot/visa"
+
 # ------------------ ЯЗЫК ------------------
 
 user_lang: dict[int, str] = {}  # user_id -> 'ru' | 'en' | 'uk'
@@ -223,6 +227,7 @@ BUTTON_TEXTS = {
         "notify": "Уведомления",
         "wallet": "Кошелёк",
         "memland": "Мемляндия🦄",
+        "gold_visa": "💳 Gold VISA Dubai",
         "buy_tickets": "Купить тикеты 🎫",
         "my_tickets": "Мои тикеты",
         "leaderboard": "🏆",
@@ -234,6 +239,7 @@ BUTTON_TEXTS = {
         "notify": "Notifications",
         "wallet": "Wallet",
         "memland": "Memelandia🦄",
+        "gold_visa": "💳 Gold VISA Dubai",
         "buy_tickets": "Buy tickets 🎫",
         "my_tickets": "My tickets",
         "leaderboard": "🏆",
@@ -245,6 +251,7 @@ BUTTON_TEXTS = {
         "notify": "Сповіщення",
         "wallet": "Гаманець",
         "memland": "Мемляндія🦄",
+        "gold_visa": "💳 Gold VISA Dubai",
         "buy_tickets": "Купити квитки 🎫",
         "my_tickets": "Мої квитки",
         "leaderboard": "🏆",
@@ -264,7 +271,7 @@ def footer_buttons(lang: str) -> ReplyKeyboardMarkup:
         [KeyboardButton(t["chart"])],
         [KeyboardButton(t["notify"])],
         [KeyboardButton(t["wallet"])],
-        [KeyboardButton(t["memland"])],
+        [KeyboardButton(t["memland"]), KeyboardButton(t["gold_visa"])],
         [KeyboardButton(t["buy_tickets"])],
         [KeyboardButton(t["my_tickets"]), KeyboardButton(t["leaderboard"]), KeyboardButton(t["ref_link"])],
     ]
@@ -1025,6 +1032,21 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
             print("Memelandia chart error:", e)
         return
 
+    # Gold VISA Dubai
+    if text == t["gold_visa"]:
+        if lang == "en":
+            msg = "Apply for Gold VISA Dubai:"
+        elif lang == "uk":
+            msg = "Оформити Gold VISA Dubai можна тут:"
+        else:
+            msg = "Оформить Gold VISA Dubai можно здесь:"
+
+        kb = InlineKeyboardMarkup(
+            [[InlineKeyboardButton("💳 Gold VISA Dubai", url=GOLD_VISA_URL)]]
+        )
+        await update.message.reply_text(msg, reply_markup=kb, disable_web_page_preview=True)
+        return
+
     # Купить тикеты
     if text == t["buy_tickets"]:
         if not (has_db() and CRYPTOBOT_TOKEN):
@@ -1145,7 +1167,7 @@ async def ref_link_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Твоя реф. ссылка:\n{ref_url}")
 
 
-# -------- ЛИДЕРБОРД: тут единственное логическое изменение --------
+# -------- ЛИДЕРБОРД --------
 async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lb = get_leaderboard(limit=100)
     if not lb:
