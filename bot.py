@@ -222,7 +222,7 @@ def text_memlandia_error(lang: str) -> str:
 
 BUTTON_TEXTS = {
     "ru": {
-        "price_chart": "Курс $TON",
+        "price_ton": "Курс $TON",
         "notify": "Уведомления",
         "wallet": "Кошелёк",
         "referrals": "Рефералы",
@@ -232,7 +232,7 @@ BUTTON_TEXTS = {
         "leaderboard": "🏆",
     },
     "en": {
-        "price_chart": "TON price & chart",
+        "price_ton": "TON price $",
         "notify": "Notifications",
         "wallet": "Wallet",
         "referrals": "Referrals",
@@ -242,7 +242,7 @@ BUTTON_TEXTS = {
         "leaderboard": "🏆",
     },
     "uk": {
-        "price_chart": "Курс $TON",
+        "price_ton": "Курс $TON",
         "notify": "Сповіщення",
         "wallet": "Гаманець",
         "referrals": "Реферали",
@@ -261,7 +261,7 @@ def get_button_texts(lang: str) -> dict:
 def footer_buttons(lang: str) -> ReplyKeyboardMarkup:
     t = get_button_texts(lang)
     keyboard = [
-        [KeyboardButton(t["price_chart"])],
+        [KeyboardButton(t["price_ton"])],
         [KeyboardButton(t["notify"])],
         [KeyboardButton(t["wallet"])],
         [KeyboardButton(t["referrals"])],
@@ -307,24 +307,24 @@ def init_db():
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS ticket_users (
-                    user_id      BIGINT PRIMARY KEY,
-                    total_ton    NUMERIC NOT NULL DEFAULT 0,
+                    user_id       BIGINT PRIMARY KEY,
+                    total_ton     NUMERIC NOT NULL DEFAULT 0,
                     total_tickets INTEGER NOT NULL DEFAULT 0,
-                    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
                 """
             )
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS ticket_invoices (
-                    invoice_id   BIGINT PRIMARY KEY,
-                    user_id      BIGINT NOT NULL,
-                    tickets      INTEGER NOT NULL,
-                    amount_ton   NUMERIC NOT NULL,
-                    status       TEXT NOT NULL,
-                    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    invoice_id BIGINT PRIMARY KEY,
+                    user_id    BIGINT NOT NULL,
+                    tickets    INTEGER NOT NULL,
+                    amount_ton NUMERIC NOT NULL,
+                    status     TEXT   NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
                 """
             )
@@ -332,8 +332,8 @@ def init_db():
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS referrals (
-                    referred_id BIGINT PRIMARY KEY,
                     referrer_id BIGINT NOT NULL,
+                    referred_id BIGINT PRIMARY KEY,
                     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
                 """
@@ -536,60 +536,41 @@ def get_leaderboard(limit: int = 100) -> List[Dict[str, Any]]:
     return result
 
 
-# --- РЕФЕРАЛЫ ---
+# --- рефералы
 
-def save_referral(referrer_id: int, referred_id: int):
+def add_referral(referrer_id: int, referred_id: int):
     if not has_db():
         return
     if referrer_id == referred_id:
         return
-
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO referrals (referred_id, referrer_id, created_at)
-                VALUES (%s, %s, NOW())
+                INSERT INTO referrals (referrer_id, referred_id)
+                VALUES (%s, %s)
                 ON CONFLICT (referred_id) DO NOTHING;
                 """,
-                (referred_id, referrer_id),
+                (referrer_id, referred_id),
             )
 
 
-def get_referral_stats(user_id: int) -> Dict[str, float]:
+def get_user_referral_count(user_id: int) -> int:
     if not has_db():
-        return {"count": 0, "ton_total": 0.0}
-
+        return 0
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
-                SELECT
-                    COUNT(DISTINCT r.referred_id) AS cnt,
-                    COALESCE(SUM(t.total_ton), 0) AS ton_sum
-                FROM referrals r
-                LEFT JOIN ticket_users t
-                    ON t.user_id = r.referred_id
-                WHERE r.referrer_id = %s;
-                """,
+                "SELECT COUNT(*) FROM referrals WHERE referrer_id = %s;",
                 (user_id,),
             )
             row = cur.fetchone()
-
-    if not row:
-        return {"count": 0, "ton_total": 0.0}
-
-    cnt, ton_sum = row
-    return {
-        "count": int(cnt or 0),
-        "ton_total": float(ton_sum or 0.0),
-    }
+            return int(row[0]) if row else 0
 
 
-def get_global_top_referrer() -> Optional[Dict[str, Any]]:
+def get_top_referrer() -> Optional[Dict[str, Any]]:
     if not has_db():
         return None
-
     with get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -602,85 +583,9 @@ def get_global_top_referrer() -> Optional[Dict[str, Any]]:
                 """
             )
             row = cur.fetchone()
-
-    if not row:
-        return None
-
-    referrer_id, cnt = row
-    return {"user_id": int(referrer_id), "count": int(cnt or 0)}
-
-
-# ------------------ ДАННЫЕ TON ------------------
-
-def get_ton_price_usd() -> Optional[float]:
-    try:
-        r = requests.get(BINANCE_TICKER, params={"symbol": SYMBOL}, timeout=8)
-        data = r.json()
-        return float(data["price"])
-    except Exception as e:
-        print("Price error:", e)
-        return None
-
-
-def get_ton_history(hours: int = 72):
-    try:
-        r = requests.get(
-            BINANCE_KLINES,
-            params={"symbol": SYMBOL, "interval": "1h", "limit": hours},
-            timeout=10,
-        )
-        klines = r.json()
-        if not isinstance(klines, list):
-            return [], []
-
-        times = [datetime.fromtimestamp(k[0] / 1000) for k in klines]
-        prices = [float(k[4]) for k in klines]
-        return times, prices
-    except Exception as e:
-        print("History error:", e)
-        return [], []
-
-
-# ------------------ ГРАФИК TON ------------------
-
-def create_ton_chart() -> bytes:
-    times, prices = get_ton_history(72)
-    if not times or not prices:
-        raise RuntimeError("No chart data")
-
-    current_price = prices[-1]
-
-    plt.style.use("default")
-    fig, ax = plt.subplots(figsize=(9, 6), dpi=250)
-
-    fig.patch.set_facecolor("#FFFFFF")
-    ax.set_facecolor("#F5FAFF")
-
-    line_color = "#3B82F6"
-    ax.plot(times, prices, linewidth=2.3, color=line_color)
-    ax.fill_between(times, prices, min(prices), color=line_color, alpha=0.22)
-
-    ax.grid(True, linewidth=0.3, alpha=0.25)
-
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.spines["bottom"].set_color("#D0D7E2")
-    ax.spines["left"].set_color("#D0D7E2")
-
-    ax.tick_params(axis="x", colors="#6B7280", labelsize=8)
-    ax.tick_params(axis="y", colors="#6B7280", labelsize=8)
-
-    fig.text(
-        0.01, -0.04, f"1 TON = {current_price:.3f} $", fontsize=12, color="#111827", ha="left"
-    )
-
-    fig.tight_layout(pad=1.5)
-
-    buf = io.BytesIO()
-    plt.savefig(buf, format="png", bbox_inches="tight")
-    plt.close()
-    buf.seek(0)
-    return buf.getvalue()
+            if not row:
+                return None
+            return {"referrer_id": int(row[0]), "count": int(row[1])}
 
 
 # ------------------ MEMELANDIA HELPERS ------------------
@@ -844,6 +749,79 @@ def create_memelandia_bar_chart(coins: list[dict]) -> bytes:
     return buf.getvalue()
 
 
+# ------------------ ДАННЫЕ TON ------------------
+
+def get_ton_price_usd() -> Optional[float]:
+    try:
+        r = requests.get(BINANCE_TICKER, params={"symbol": SYMBOL}, timeout=8)
+        data = r.json()
+        return float(data["price"])
+    except Exception as e:
+        print("Price error:", e)
+        return None
+
+
+def get_ton_history(hours: int = 72):
+    try:
+        r = requests.get(
+            BINANCE_KLINES,
+            params={"symbol": SYMBOL, "interval": "1h", "limit": hours},
+            timeout=10,
+        )
+        klines = r.json()
+        if not isinstance(klines, list):
+            return [], []
+
+        times = [datetime.fromtimestamp(k[0] / 1000) for k in klines]
+        prices = [float(k[4]) for k in klines]
+        return times, prices
+    except Exception as e:
+        print("History error:", e)
+        return [], []
+
+
+# ------------------ ГРАФИК TON ------------------
+
+def create_ton_chart() -> bytes:
+    times, prices = get_ton_history(72)
+    if not times or not prices:
+        raise RuntimeError("No chart data")
+
+    current_price = prices[-1]
+
+    plt.style.use("default")
+    fig, ax = plt.subplots(figsize=(9, 6), dpi=250)
+
+    fig.patch.set_facecolor("#FFFFFF")
+    ax.set_facecolor("#F5FAFF")
+
+    line_color = "#3B82F6"
+    ax.plot(times, prices, linewidth=2.3, color=line_color)
+    ax.fill_between(times, prices, min(prices), color=line_color, alpha=0.22)
+
+    ax.grid(True, linewidth=0.3, alpha=0.25)
+
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["bottom"].set_color("#D0D7E2")
+    ax.spines["left"].set_color("#D0D7E2")
+
+    ax.tick_params(axis="x", colors="#6B7280", labelsize=8)
+    ax.tick_params(axis="y", colors="#6B7280", labelsize=8)
+
+    fig.text(
+        0.01, -0.04, f"1 TON = {current_price:.3f} $", fontsize=12, color="#111827", ha="left"
+    )
+
+    fig.tight_layout(pad=1.5)
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png", bbox_inches="tight")
+    plt.close()
+    buf.seek(0)
+    return buf.getvalue()
+
+
 # ----------- ОТПРАВКА ЦЕНЫ + ГРАФИКА ------------
 
 async def send_price_and_chart(chat_id: int, lang: str, context: ContextTypes.DEFAULT_TYPE):
@@ -917,13 +895,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_lang[user_id] = "ru"
 
-    # реферальный пэйлоад: /start <referrer_id>
+    # рефералка: /start 123456789
+    referrer_id = None
     if context.args:
         try:
             referrer_id = int(context.args[0])
-            save_referral(referrer_id, user_id)
-        except ValueError:
-            pass
+        except Exception:
+            referrer_id = None
+
+    if referrer_id:
+        add_referral(referrer_id, user_id)
 
     keyboard = [
         [
@@ -995,7 +976,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         status = invoice.get("status")
         amount = float(invoice.get("amount") or 0)
-        asset = invoice.get("asset")
 
         if status != "paid":
             await query.message.reply_text("Пока не оплачено. Попробуй через минуту ещё раз.")
@@ -1036,9 +1016,8 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
     text = (update.message.text or "").strip()
 
     # Курс $TON (курс + график)
-    if text == t["price_chart"]:
-        chat_id = update.effective_chat.id
-        await send_price_and_chart(chat_id, lang, context)
+    if text == t["price_ton"]:
+        await send_price_and_chart(update.effective_chat.id, lang, context)
         return
 
     # Уведомления
@@ -1076,78 +1055,9 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(msg)
         return
 
-    # Рефералы (ссылка + статистика + топ-реферер)
+    # Рефералы
     if text == t["referrals"]:
-        me = await context.bot.get_me()
-        username = me.username
-        ref_url = f"https://t.me/{username}?start={user_id}"
-
-        my_stats = get_referral_stats(user_id)
-        top = get_global_top_referrer()
-
-        if lang == "en":
-            header = "Your referral link:"
-            stats_block = (
-                "Your referral stats:\n"
-                f"Invited users: {my_stats['count']}\n"
-                f"Their total ticket purchases: {my_stats['ton_total']:.2f} TON"
-            )
-            top_prefix = "Top referrer now:"
-            no_top = "No referrals in the system yet."
-        elif lang == "uk":
-            header = "Твоє реферальне посилання:"
-            stats_block = (
-                "Твоя реферальна статистика:\n"
-                f"Запрошено людей: {my_stats['count']}\n"
-                f"Їхні сумарні покупки квитків: {my_stats['ton_total']:.2f} TON"
-            )
-            top_prefix = "Зараз найбільше запросив:"
-            no_top = "У системі ще немає рефералів."
-        else:
-            header = "Твоя реф. ссылка:"
-            stats_block = (
-                "Твоя реферальная статистика:\n"
-                f"Приглашено людей: {my_stats['count']}\n"
-                f"Их суммарные покупки тикетов: {my_stats['ton_total']:.2f} TON"
-            )
-            top_prefix = "Сейчас больше всего людей привёл:"
-            no_top = "В системе ещё нет рефералов."
-
-        top_block = ""
-        if top:
-            top_user_id = top["user_id"]
-            top_count = top["count"]
-            try:
-                chat = await context.bot.get_chat(top_user_id)
-            except Exception as e:
-                print(f"get_chat error for top referrer {top_user_id}:", e)
-                chat = None
-
-            display_name = None
-            if chat:
-                if getattr(chat, "username", None):
-                    display_name = f"@{chat.username}"
-                elif getattr(chat, "full_name", None):
-                    display_name = chat.full_name
-
-            if not display_name:
-                display_name = f"ID {top_user_id}"
-
-            safe_name = html.escape(display_name)
-            link = f"tg://user?id={top_user_id}"
-            name_link = f'<a href="{link}">{safe_name}</a>'
-
-            top_block = f"{top_prefix} {name_link} — {top_count} рефералов"
-        else:
-            top_block = no_top
-
-        text_msg = (
-            f"{header}\n{ref_url}\n\n"
-            f"{stats_block}\n\n"
-            f"{top_block}"
-        )
-
-        await update.message.reply_text(text_msg, parse_mode="HTML")
+        await referrals_cmd(update, context)
         return
 
     # Мемляндия
@@ -1160,6 +1070,7 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
         msg = format_memelandia_top(lang, top)
         await update.message.reply_text(msg)
 
+        # картинка
         try:
             img = create_memelandia_bar_chart(top)
             await update.message.reply_photo(img, caption="Top-5 Memelandia — 24h %")
@@ -1191,6 +1102,8 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
         tickets = 1
         amount_ton = 1.0
 
+        stats = get_user_ticket_stats(user_id)
+
         try:
             invoice = create_ticket_invoice_api(user_id, tickets, amount_ton)
         except Exception as e:
@@ -1204,24 +1117,49 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
 
         save_invoice(invoice_id, user_id, tickets, amount_ton, status)
 
+        # текст в зависимости от языка
         if lang == "en":
-            promo = "Want to be on the leaderboard? Buy a ticket 🙂"
+            tagline = "Want to be on the leaderboard? Buy a ticket 🙂"
+            stats_text = (
+                f"Your tickets: {stats['tickets']}\n"
+                f"Total bought: {stats['total_ton']:.2f} TON"
+            )
+            text_invoice = (
+                "Invoice created ✅\n\n"
+                f"Amount: {amount_ton:.2f} TON\n"
+                f"Tickets: {tickets}\n\n"
+                "After payment press “Check payment”.\n\n"
+                f"{tagline}\n\n"
+                f"{stats_text}"
+            )
         elif lang == "uk":
-            promo = "Хочеш у лідерборд? Купи квиток 🙂"
+            tagline = "Хочеш у лідерборд? Купи квиток 🙂"
+            stats_text = (
+                f"Твої квитки: {stats['tickets']}\n"
+                f"Всього куплено: {stats['total_ton']:.2f} TON"
+            )
+            text_invoice = (
+                "Рахунок створено ✅\n\n"
+                f"Сума: {amount_ton:.2f} TON\n"
+                f"Квитків: {tickets}\n\n"
+                "Після оплати натисни «Перевірити оплату».\n\n"
+                f"{tagline}\n\n"
+                f"{stats_text}"
+            )
         else:
-            promo = "Хочешь в лидерборд? Купи тикет 🙂"
-
-        stats = get_user_ticket_stats(user_id)
-
-        text_invoice = (
-            "Счёт создан ✅\n\n"
-            f"Сумма: {amount_ton:.2f} TON\n"
-            f"Тикетов: {tickets}\n\n"
-            f"{promo}\n\n"
-            "После оплаты нажми «Проверить оплату».\n\n"
-            f"Твои тикеты сейчас: {stats['tickets']}\n"
-            f"Всего куплено: {stats['total_ton']:.2f} TON"
-        )
+            tagline = "Хочешь в лидерборд? Купи тикет 🙂"
+            stats_text = (
+                f"Твои тикеты: {stats['tickets']}\n"
+                f"Всего куплено: {stats['total_ton']:.2f} TON"
+            )
+            text_invoice = (
+                "Счёт создан ✅\n\n"
+                f"Сумма: {amount_ton:.2f} TON\n"
+                f"Тикетов: {tickets}\n\n"
+                "После оплаты нажми «Проверить оплату».\n\n"
+                f"{tagline}\n\n"
+                f"{stats_text}"
+            )
 
         kb = InlineKeyboardMarkup(
             [
@@ -1243,24 +1181,43 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
         return
 
 
-# отдельные команды
-
+# отдельные команды (если кто-то захочет писать руками)
 async def price_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # оставляем /price для ручного вызова только курса
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
-    chat_id = update.effective_chat.id
-    await send_price_and_chart(chat_id, lang, context)
+    p = get_ton_price_usd()
+    if p:
+        await update.message.reply_text(text_price_ok(lang, p))
+    else:
+        await update.message.reply_text(text_price_error(lang))
 
 
 async def chart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # /chart тоже шлёт курс+график
+    # оставляем /chart для ручного вызова только графика
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
-    chat_id = update.effective_chat.id
-    await send_price_and_chart(chat_id, lang, context)
+
+    info = await update.message.reply_text(text_chart_build(lang))
+    try:
+        img = create_ton_chart()
+        await update.message.reply_photo(
+            img,
+            caption="[Binance](https://www.binance.com/referral/earn-together/refer2earn-usdc/claim?hl=en&ref=GRO_28502_1C1WM&utm_source=default)",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        print("Chart error:", e)
+        await update.message.reply_text(text_chart_error(lang))
+    finally:
+        try:
+            await info.delete()
+        except Exception:
+            pass
 
 
 async def my_tickets_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # команда на всякий случай (кнопки уже нет)
     user_id = update.effective_user.id
     stats = get_user_ticket_stats(user_id)
     await update.message.reply_text(
@@ -1269,15 +1226,93 @@ async def my_tickets_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def buy_tickets_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await footer_buttons_handler(update, context)
+    # просто продублируем поведение кнопки
+    fake_update = update
+    await footer_buttons_handler(fake_update, context)
 
 
 async def ref_link_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # на случай ручной команды /reflink
     user_id = update.effective_user.id
     me = await context.bot.get_me()
     username = me.username
     ref_url = f"https://t.me/{username}?start={user_id}"
     await update.message.reply_text(f"Твоя реф. ссылка:\n{ref_url}")
+
+
+async def referrals_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    lang = get_user_language(user_id)
+
+    me = await context.bot.get_me()
+    username = me.username
+    ref_url = f"https://t.me/{username}?start={user_id}"
+
+    my_count = get_user_referral_count(user_id)
+    top = get_top_referrer()
+
+    lines: List[str] = []
+
+    if lang == "en":
+        lines.append("👥 Referrals")
+        lines.append("")
+        lines.append(f"Your referral link:\n{ref_url}")
+        lines.append("")
+        lines.append(f"Your referrals: {my_count}")
+    elif lang == "uk":
+        lines.append("👥 Реферали")
+        lines.append("")
+        lines.append(f"Твоє реферальне посилання:\n{ref_url}")
+        lines.append("")
+        lines.append(f"Твої реферали: {my_count}")
+    else:
+        lines.append("👥 Рефералы")
+        lines.append("")
+        lines.append(f"Твоя реферальная ссылка:\n{ref_url}")
+        lines.append("")
+        lines.append(f"Твои рефералы: {my_count}")
+
+    if top:
+        top_id = top["referrer_id"]
+        top_count = top["count"]
+        # пытаемся получить ник топа
+        try:
+            chat = await context.bot.get_chat(top_id)
+        except Exception as e:
+            print(f"get_chat error for top referrer {top_id}:", e)
+            chat = None
+
+        display_name = None
+        if chat:
+            if getattr(chat, "username", None):
+                display_name = f"@{chat.username}"
+            elif getattr(chat, "full_name", None):
+                display_name = chat.full_name
+
+        if not display_name:
+            display_name = f"ID {top_id}"
+
+        safe_name = html.escape(display_name)
+        link = f"tg://user?id={top_id}"
+        name_link = f'<a href="{link}">{safe_name}</a>'
+
+        lines.append("")
+        if lang == "en":
+            lines.append(f"Top referrer: {name_link} — {top_count} referrals")
+        elif lang == "uk":
+            lines.append(f"Топ реферер: {name_link} — {top_count} рефералів")
+        else:
+            lines.append(f"Топ реферер: {name_link} — {top_count} рефералов")
+    else:
+        lines.append("")
+        if lang == "en":
+            lines.append("No referrals yet. Be the first 😉")
+        elif lang == "uk":
+            lines.append("Ще немає рефералів. Будь першим 😉")
+        else:
+            lines.append("Пока нет рефералов. Будь первым 😉")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
 # -------- ЛИДЕРБОРД --------
@@ -1287,15 +1322,17 @@ async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Пока ещё никто не купил тикеты.")
         return
 
-    lines = ["🏆 Лидерборд по тикетам:", ""]
     current_user_id = update.effective_user.id if update.effective_user else None
-    lang = get_user_language(current_user_id) if current_user_id is not None else "ru"
+    lang = get_user_language(current_user_id or 0)
+
+    lines = ["🏆 Лидерборд по тикетам:", ""]
 
     for i, row in enumerate(lb, start=1):
         uid = row["user_id"]
         tickets = row["tickets"]
         total_ton = row["total_ton"]
 
+        # пытаемся получить данные пользователя
         try:
             chat = await context.bot.get_chat(uid)
         except Exception as e:
@@ -1325,14 +1362,25 @@ async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"   тикеты: {tickets}, всего куплено: {total_ton:.2f} TON"
         )
 
-    if lang == "en":
-        tagline = "Want to be here? Buy a ticket 🎫"
-    elif lang == "uk":
-        tagline = "Хочеш бути тут? Купи квиток 🎫"
-    else:
-        tagline = "Хочешь сюда? Купи тикет 🎫"
-
     lines.append("")
+
+    # подпись внизу
+    if lang == "en":
+        tagline = (
+            "Want to be here? Buy a ticket 🎫\n"
+            "Want the very top spot? You'll need to outbid the others 🙂"
+        )
+    elif lang == "uk":
+        tagline = (
+            "Хочеш бути тут? Купи квиток 🎫\n"
+            "Хочеш бути на самому верху — доведеться перебити ставку інших 🙂"
+        )
+    else:
+        tagline = (
+            "Хочешь сюда? Купи тикет 🎫\n"
+            "Хочешь быть на самом верхнем месте — придётся перебить ставку других 🙂"
+        )
+
     lines.append(tagline)
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
@@ -1390,6 +1438,7 @@ def main():
     app.add_handler(CommandHandler("buytickets", buy_tickets_cmd))
     app.add_handler(CommandHandler("reflink", ref_link_cmd))
     app.add_handler(CommandHandler("top", top_cmd))
+    app.add_handler(CommandHandler("referrals", referrals_cmd))
 
     app.add_handler(CallbackQueryHandler(callback_handler))
 
