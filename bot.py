@@ -198,6 +198,28 @@ def unsubscribe_button_text(lang: str) -> str:
         return "Отписаться"
 
 
+# -------- СЛОГАНЫ ДЛЯ ТИКЕТОВ / ЛИДЕРБОРДА --------
+
+def text_ticket_slogan_button(lang: str) -> str:
+    """Под кнопкой «Купить тикеты 🎫»"""
+    if lang == "en":
+        return "Want to be on the leaderboard? Buy a ticket 🙂"
+    elif lang == "uk":
+        return "Хочеш у лідерборд? Купи квиток :)"
+    else:
+        return "Хочешь в лидерборд? Купи тикет 🙂"
+
+
+def text_ticket_slogan_top(lang: str) -> str:
+    """Внизу /top"""
+    if lang == "en":
+        return "Want to be on the leaderboard? Buy a ticket 🎫"
+    elif lang == "uk":
+        return "Хочеш у лідерборд? Купи квиток 🎫"
+    else:
+        return "Хочешь сюда? Купи тикет 🎫"
+
+
 # -------- ТЕКСТЫ ДЛЯ МЕМЛЯНДИИ --------
 
 def text_memlandia_header(lang: str) -> str:
@@ -1069,11 +1091,14 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
 
         save_invoice(invoice_id, user_id, tickets, amount_ton, status)
 
+        slogan = text_ticket_slogan_button(lang)
+
         text_invoice = (
             "Счёт создан ✅\n\n"
             f"Сумма: {amount_ton:.2f} TON\n"
             f"Тикетов: {tickets}\n\n"
-            "После оплаты нажми «Проверить оплату»."
+            "После оплаты нажми «Проверить оплату».\n\n"
+            f"{slogan}"
         )
 
         kb = InlineKeyboardMarkup(
@@ -1176,6 +1201,7 @@ async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = ["🏆 Лидерборд по тикетам:", ""]
     current_user_id = update.effective_user.id if update.effective_user else None
+    lang = get_user_language(current_user_id) if current_user_id else "ru"
 
     for i, row in enumerate(lb, start=1):
         uid = row["user_id"]
@@ -1211,6 +1237,10 @@ async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{i}. {name_link}{you}\n"
             f"   тикеты: {tickets}, всего куплено: {total_ton:.2f} TON"
         )
+
+    # слоган внизу
+    lines.append("")
+    lines.append(text_ticket_slogan_top(lang))
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
