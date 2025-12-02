@@ -222,8 +222,7 @@ def text_memlandia_error(lang: str) -> str:
 
 BUTTON_TEXTS = {
     "ru": {
-        "price": "Курс",
-        "chart": "График",
+        "price_chart": "Курс $TON",
         "notify": "Уведомления",
         "wallet": "Кошелёк",
         "referrals": "Рефералы",
@@ -233,8 +232,7 @@ BUTTON_TEXTS = {
         "leaderboard": "🏆",
     },
     "en": {
-        "price": "Rate",
-        "chart": "Chart",
+        "price_chart": "TON price & chart",
         "notify": "Notifications",
         "wallet": "Wallet",
         "referrals": "Referrals",
@@ -244,8 +242,7 @@ BUTTON_TEXTS = {
         "leaderboard": "🏆",
     },
     "uk": {
-        "price": "Курс",
-        "chart": "Графік",
+        "price_chart": "Курс $TON",
         "notify": "Сповіщення",
         "wallet": "Гаманець",
         "referrals": "Реферали",
@@ -264,8 +261,7 @@ def get_button_texts(lang: str) -> dict:
 def footer_buttons(lang: str) -> ReplyKeyboardMarkup:
     t = get_button_texts(lang)
     keyboard = [
-        [KeyboardButton(t["price"])],
-        [KeyboardButton(t["chart"])],
+        [KeyboardButton(t["price_chart"])],
         [KeyboardButton(t["notify"])],
         [KeyboardButton(t["wallet"])],
         [KeyboardButton(t["referrals"])],
@@ -1039,33 +1035,10 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
     t = get_button_texts(lang)
     text = (update.message.text or "").strip()
 
-    # Курс
-    if text == t["price"]:
-        p = get_ton_price_usd()
-        if p is not None:
-            await update.message.reply_text(text_price_ok(lang, p))
-        else:
-            await update.message.reply_text(text_price_error(lang))
-        return
-
-    # График
-    if text == t["chart"]:
-        info = await update.message.reply_text(text_chart_build(lang))
-        try:
-            img = create_ton_chart()
-            await update.message.reply_photo(
-                img,
-                caption="[Binance](https://www.binance.com/referral/earn-together/refer2earn-usdc/claim?hl=en&ref=GRO_28502_1C1WM&utm_source=default)",
-                parse_mode="Markdown",
-            )
-        except Exception as e:
-            print("Chart error:", e)
-            await update.message.reply_text(text_chart_error(lang))
-        finally:
-            try:
-                await info.delete()
-            except Exception:
-                pass
+    # Курс $TON (курс + график)
+    if text == t["price_chart"]:
+        chat_id = update.effective_chat.id
+        await send_price_and_chart(chat_id, lang, context)
         return
 
     # Уведомления
@@ -1112,7 +1085,6 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
         my_stats = get_referral_stats(user_id)
         top = get_global_top_referrer()
 
-        # строим текст по языкам
         if lang == "en":
             header = "Your referral link:"
             stats_block = (
@@ -1272,36 +1244,20 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
 
 
 # отдельные команды
+
 async def price_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
-    p = get_ton_price_usd()
-    if p:
-        await update.message.reply_text(text_price_ok(lang, p))
-    else:
-        await update.message.reply_text(text_price_error(lang))
+    chat_id = update.effective_chat.id
+    await send_price_and_chart(chat_id, lang, context)
 
 
 async def chart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # /chart тоже шлёт курс+график
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
-
-    info = await update.message.reply_text(text_chart_build(lang))
-    try:
-        img = create_ton_chart()
-        await update.message.reply_photo(
-            img,
-            caption="[Binance](https://www.binance.com/referral/earn-together/refer2earn-usdc/claim?hl=en&ref=GRO_28502_1C1WM&utm_source=default)",
-            parse_mode="Markdown",
-        )
-    except Exception as e:
-        print("Chart error:", e)
-        await update.message.reply_text(text_chart_error(lang))
-    finally:
-        try:
-            await info.delete()
-        except Exception:
-            pass
+    chat_id = update.effective_chat.id
+    await send_price_and_chart(chat_id, lang, context)
 
 
 async def my_tickets_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
