@@ -226,36 +226,33 @@ BUTTON_TEXTS = {
         "chart": "График",
         "notify": "Уведомления",
         "wallet": "Кошелёк",
+        "referrals": "Рефералы",
         "memland": "Мемляндия🦄",
         "gold_visa": "💳 Gold VISA Dubai",
         "buy_tickets": "Купить тикеты 🎫",
         "leaderboard": "🏆",
-        "referrals": "Рефералы",
-        "ref_link": "Реф. ссылка",
     },
     "en": {
         "price": "Rate",
         "chart": "Chart",
         "notify": "Notifications",
         "wallet": "Wallet",
+        "referrals": "Referrals",
         "memland": "Memelandia🦄",
         "gold_visa": "💳 Gold VISA Dubai",
         "buy_tickets": "Buy tickets 🎫",
         "leaderboard": "🏆",
-        "referrals": "Referrals",
-        "ref_link": "Ref. link",
     },
     "uk": {
         "price": "Курс",
         "chart": "Графік",
         "notify": "Сповіщення",
         "wallet": "Гаманець",
+        "referrals": "Реферали",
         "memland": "Мемляндія🦄",
         "gold_visa": "💳 Gold VISA Dubai",
         "buy_tickets": "Купити квитки 🎫",
         "leaderboard": "🏆",
-        "referrals": "Реферали",
-        "ref_link": "Реф. посилання",
     },
 }
 
@@ -271,9 +268,9 @@ def footer_buttons(lang: str) -> ReplyKeyboardMarkup:
         [KeyboardButton(t["chart"])],
         [KeyboardButton(t["notify"])],
         [KeyboardButton(t["wallet"])],
+        [KeyboardButton(t["referrals"])],
         [KeyboardButton(t["memland"]), KeyboardButton(t["gold_visa"])],
         [KeyboardButton(t["buy_tickets"]), KeyboardButton(t["leaderboard"])],
-        [KeyboardButton(t["referrals"]), KeyboardButton(t["ref_link"])],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
@@ -335,7 +332,7 @@ def init_db():
                 );
                 """
             )
-            # рефералы: один пригласивший на одного юзера (по первой ссылке)
+            # рефералы
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS referrals (
@@ -546,15 +543,10 @@ def get_leaderboard(limit: int = 100) -> List[Dict[str, Any]]:
 # --- РЕФЕРАЛЫ ---
 
 def save_referral(referrer_id: int, referred_id: int):
-    """
-    Сохраняем, что referred_id пришёл по ссылке referrer_id.
-    Только один раз (по первой ссылке).
-    """
     if not has_db():
         return
-
     if referrer_id == referred_id:
-        return  # не считаем самих себя
+        return
 
     with get_conn() as conn:
         with conn.cursor() as cur:
@@ -569,9 +561,6 @@ def save_referral(referrer_id: int, referred_id: int):
 
 
 def get_referral_stats(user_id: int) -> Dict[str, float]:
-    """
-    Кол-во приглашённых и их суммарный объём покупок тикетов (TON).
-    """
     if not has_db():
         return {"count": 0, "ton_total": 0.0}
 
@@ -599,6 +588,30 @@ def get_referral_stats(user_id: int) -> Dict[str, float]:
         "count": int(cnt or 0),
         "ton_total": float(ton_sum or 0.0),
     }
+
+
+def get_global_top_referrer() -> Optional[Dict[str, Any]]:
+    if not has_db():
+        return None
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT referrer_id, COUNT(*) AS cnt
+                FROM referrals
+                GROUP BY referrer_id
+                ORDER BY cnt DESC
+                LIMIT 1;
+                """
+            )
+            row = cur.fetchone()
+
+    if not row:
+        return None
+
+    referrer_id, cnt = row
+    return {"user_id": int(referrer_id), "count": int(cnt or 0)}
 
 
 # ------------------ ДАННЫЕ TON ------------------
@@ -908,7 +921,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_lang[user_id] = "ru"
 
-    # обработка реферального пэйлоада: /start <referrer_id>
+    # реферальный пэйлоад: /start <referrer_id>
     if context.args:
         try:
             referrer_id = int(context.args[0])
@@ -1090,6 +1103,81 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(msg)
         return
 
+    # Рефералы (ссылка + статистика + топ-реферер)
+    if text == t["referrals"]:
+        me = await context.bot.get_me()
+        username = me.username
+        ref_url = f"https://t.me/{username}?start={user_id}"
+
+        my_stats = get_referral_stats(user_id)
+        top = get_global_top_referrer()
+
+        # строим текст по языкам
+        if lang == "en":
+            header = "Your referral link:"
+            stats_block = (
+                "Your referral stats:\n"
+                f"Invited users: {my_stats['count']}\n"
+                f"Their total ticket purchases: {my_stats['ton_total']:.2f} TON"
+            )
+            top_prefix = "Top referrer now:"
+            no_top = "No referrals in the system yet."
+        elif lang == "uk":
+            header = "Твоє реферальне посилання:"
+            stats_block = (
+                "Твоя реферальна статистика:\n"
+                f"Запрошено людей: {my_stats['count']}\n"
+                f"Їхні сумарні покупки квитків: {my_stats['ton_total']:.2f} TON"
+            )
+            top_prefix = "Зараз найбільше запросив:"
+            no_top = "У системі ще немає рефералів."
+        else:
+            header = "Твоя реф. ссылка:"
+            stats_block = (
+                "Твоя реферальная статистика:\n"
+                f"Приглашено людей: {my_stats['count']}\n"
+                f"Их суммарные покупки тикетов: {my_stats['ton_total']:.2f} TON"
+            )
+            top_prefix = "Сейчас больше всего людей привёл:"
+            no_top = "В системе ещё нет рефералов."
+
+        top_block = ""
+        if top:
+            top_user_id = top["user_id"]
+            top_count = top["count"]
+            try:
+                chat = await context.bot.get_chat(top_user_id)
+            except Exception as e:
+                print(f"get_chat error for top referrer {top_user_id}:", e)
+                chat = None
+
+            display_name = None
+            if chat:
+                if getattr(chat, "username", None):
+                    display_name = f"@{chat.username}"
+                elif getattr(chat, "full_name", None):
+                    display_name = chat.full_name
+
+            if not display_name:
+                display_name = f"ID {top_user_id}"
+
+            safe_name = html.escape(display_name)
+            link = f"tg://user?id={top_user_id}"
+            name_link = f'<a href="{link}">{safe_name}</a>'
+
+            top_block = f"{top_prefix} {name_link} — {top_count} рефералов"
+        else:
+            top_block = no_top
+
+        text_msg = (
+            f"{header}\n{ref_url}\n\n"
+            f"{stats_block}\n\n"
+            f"{top_block}"
+        )
+
+        await update.message.reply_text(text_msg, parse_mode="HTML")
+        return
+
     # Мемляндия
     if text == t["memland"]:
         top = fetch_memelandia_top(limit=5)
@@ -1100,7 +1188,6 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
         msg = format_memelandia_top(lang, top)
         await update.message.reply_text(msg)
 
-        # картинка
         try:
             img = create_memelandia_bar_chart(top)
             await update.message.reply_photo(img, caption="Top-5 Memelandia — 24h %")
@@ -1145,7 +1232,6 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
 
         save_invoice(invoice_id, user_id, tickets, amount_ton, status)
 
-        # промо-фраза под кнопкой
         if lang == "en":
             promo = "Want to be on the leaderboard? Buy a ticket 🙂"
         elif lang == "uk":
@@ -1179,53 +1265,13 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(text_invoice, reply_markup=kb)
         return
 
-    # Рефералы — только статистика, без ссылки
-    if text == t["referrals"]:
-        stats = get_referral_stats(user_id)
-
-        if lang == "en":
-            msg = (
-                "Your referral stats:\n\n"
-                f"Invited users: {stats['count']}\n"
-                f"Their total ticket purchases: {stats['ton_total']:.2f} TON\n\n"
-                "Referral is counted by the first /start link they used.\n"
-                "All their future ticket purchases are summed here."
-            )
-        elif lang == "uk":
-            msg = (
-                "Твоя реферальна статистика:\n\n"
-                f"Запрошено людей: {stats['count']}\n"
-                f"Їхні сумарні покупки квитків: {stats['ton_total']:.2f} TON\n\n"
-                "Реферал рахується за першою /start-лінкою, яку вони натиснули.\n"
-                "Усі їхні майбутні покупки квитків враховуються тут."
-            )
-        else:
-            msg = (
-                "Твоя реферальная статистика:\n\n"
-                f"Приглашено людей: {stats['count']}\n"
-                f"Их суммарные покупки тикетов: {stats['ton_total']:.2f} TON\n\n"
-                "Реферал считается по первой /start-ссылке, по которой человек зашёл.\n"
-                "Все его будущие покупки тикетов суммируются здесь."
-            )
-
-        await update.message.reply_text(msg)
-        return
-
     # Лидерборд 🏆
     if text == t["leaderboard"]:
         await top_cmd(update, context)
         return
 
-    # Реф. ссылка
-    if text == t["ref_link"]:
-        me = await context.bot.get_me()
-        username = me.username
-        ref_url = f"https://t.me/{username}?start={user_id}"
-        await update.message.reply_text(f"Твоя реф. ссылка:\n{ref_url}")
-        return
 
-
-# отдельные команды (если кто-то захочет писать руками)
+# отдельные команды
 async def price_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     lang = get_user_language(user_id)
@@ -1259,7 +1305,6 @@ async def chart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def my_tickets_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # команда остаётся, хотя кнопки больше нет
     user_id = update.effective_user.id
     stats = get_user_ticket_stats(user_id)
     await update.message.reply_text(
@@ -1268,7 +1313,6 @@ async def my_tickets_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def buy_tickets_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # просто продублируем поведение кнопки
     await footer_buttons_handler(update, context)
 
 
@@ -1296,7 +1340,6 @@ async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tickets = row["tickets"]
         total_ton = row["total_ton"]
 
-        # пытаемся получить данные пользователя
         try:
             chat = await context.bot.get_chat(uid)
         except Exception as e:
@@ -1326,7 +1369,6 @@ async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"   тикеты: {tickets}, всего куплено: {total_ton:.2f} TON"
         )
 
-    # слоган внизу
     if lang == "en":
         tagline = "Want to be here? Buy a ticket 🎫"
     elif lang == "uk":
