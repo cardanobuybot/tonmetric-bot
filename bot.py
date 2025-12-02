@@ -335,6 +335,16 @@ def init_db():
                 );
                 """
             )
+            # рефералы: один пригласивший на одного юзера (по первой ссылке)
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS referrals (
+                    referred_id BIGINT PRIMARY KEY,
+                    referrer_id BIGINT NOT NULL,
+                    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                """
+            )
 
     print("DB: tables ensured")
 
@@ -531,6 +541,64 @@ def get_leaderboard(limit: int = 100) -> List[Dict[str, Any]]:
             }
         )
     return result
+
+
+# --- РЕФЕРАЛЫ ---
+
+def save_referral(referrer_id: int, referred_id: int):
+    """
+    Сохраняем, что referred_id пришёл по ссылке referrer_id.
+    Только один раз (по первой ссылке).
+    """
+    if not has_db():
+        return
+
+    if referrer_id == referred_id:
+        return  # не считаем самих себя
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO referrals (referred_id, referrer_id, created_at)
+                VALUES (%s, %s, NOW())
+                ON CONFLICT (referred_id) DO NOTHING;
+                """,
+                (referred_id, referrer_id),
+            )
+
+
+def get_referral_stats(user_id: int) -> Dict[str, float]:
+    """
+    Кол-во приглашённых и их суммарный объём покупок тикетов (TON).
+    """
+    if not has_db():
+        return {"count": 0, "ton_total": 0.0}
+
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT
+                    COUNT(DISTINCT r.referred_id) AS cnt,
+                    COALESCE(SUM(t.total_ton), 0) AS ton_sum
+                FROM referrals r
+                LEFT JOIN ticket_users t
+                    ON t.user_id = r.referred_id
+                WHERE r.referrer_id = %s;
+                """,
+                (user_id,),
+            )
+            row = cur.fetchone()
+
+    if not row:
+        return {"count": 0, "ton_total": 0.0}
+
+    cnt, ton_sum = row
+    return {
+        "count": int(cnt or 0),
+        "ton_total": float(ton_sum or 0.0),
+    }
 
 
 # ------------------ ДАННЫЕ TON ------------------
@@ -840,6 +908,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_lang[user_id] = "ru"
 
+    # обработка реферального пэйлоада: /start <referrer_id>
+    if context.args:
+        try:
+            referrer_id = int(context.args[0])
+            save_referral(referrer_id, user_id)
+        except ValueError:
+            pass
+
     keyboard = [
         [
             InlineKeyboardButton("English", callback_data="lang_en"),
@@ -1103,32 +1179,33 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(text_invoice, reply_markup=kb)
         return
 
-    # Рефералы
+    # Рефералы — только статистика, без ссылки
     if text == t["referrals"]:
-        me = await context.bot.get_me()
-        username = me.username
-        ref_url = f"https://t.me/{username}?start={user_id}"
+        stats = get_referral_stats(user_id)
 
         if lang == "en":
             msg = (
-                "Referrals:\n"
-                "— Invite friends with your personal link.\n"
-                "— In future versions, referral stats will appear here.\n\n"
-                f"Your link:\n{ref_url}"
+                "Your referral stats:\n\n"
+                f"Invited users: {stats['count']}\n"
+                f"Their total ticket purchases: {stats['ton_total']:.2f} TON\n\n"
+                "Referral is counted by the first /start link they used.\n"
+                "All their future ticket purchases are summed here."
             )
         elif lang == "uk":
             msg = (
-                "Реферали:\n"
-                "— Запрошуй друзів своєю реферальною лінкою.\n"
-                "— У наступних версіях тут зʼявиться статистика.\n\n"
-                f"Твоя лінка:\n{ref_url}"
+                "Твоя реферальна статистика:\n\n"
+                f"Запрошено людей: {stats['count']}\n"
+                f"Їхні сумарні покупки квитків: {stats['ton_total']:.2f} TON\n\n"
+                "Реферал рахується за першою /start-лінкою, яку вони натиснули.\n"
+                "Усі їхні майбутні покупки квитків враховуються тут."
             )
         else:
             msg = (
-                "Рефералы:\n"
-                "— Приглашай друзей своей реферальной ссылкой.\n"
-                "— В следующих версиях здесь появится статистика.\n\n"
-                f"Твоя ссылка:\n{ref_url}"
+                "Твоя реферальная статистика:\n\n"
+                f"Приглашено людей: {stats['count']}\n"
+                f"Их суммарные покупки тикетов: {stats['ton_total']:.2f} TON\n\n"
+                "Реферал считается по первой /start-ссылке, по которой человек зашёл.\n"
+                "Все его будущие покупки тикетов суммируются здесь."
             )
 
         await update.message.reply_text(msg)
