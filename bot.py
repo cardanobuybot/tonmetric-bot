@@ -198,28 +198,6 @@ def unsubscribe_button_text(lang: str) -> str:
         return "Отписаться"
 
 
-# -------- СЛОГАНЫ ДЛЯ ТИКЕТОВ / ЛИДЕРБОРДА --------
-
-def text_ticket_slogan_button(lang: str) -> str:
-    """Под кнопкой «Купить тикеты 🎫»"""
-    if lang == "en":
-        return "Want to be on the leaderboard? Buy a ticket 🙂"
-    elif lang == "uk":
-        return "Хочеш у лідерборд? Купи квиток :)"
-    else:
-        return "Хочешь в лидерборд? Купи тикет 🙂"
-
-
-def text_ticket_slogan_top(lang: str) -> str:
-    """Внизу /top"""
-    if lang == "en":
-        return "Want to be on the leaderboard? Buy a ticket 🎫"
-    elif lang == "uk":
-        return "Хочеш у лідерборд? Купи квиток 🎫"
-    else:
-        return "Хочешь сюда? Купи тикет 🎫"
-
-
 # -------- ТЕКСТЫ ДЛЯ МЕМЛЯНДИИ --------
 
 def text_memlandia_header(lang: str) -> str:
@@ -251,8 +229,8 @@ BUTTON_TEXTS = {
         "memland": "Мемляндия🦄",
         "gold_visa": "💳 Gold VISA Dubai",
         "buy_tickets": "Купить тикеты 🎫",
-        "my_tickets": "Мои тикеты",
         "leaderboard": "🏆",
+        "referrals": "Рефералы",
         "ref_link": "Реф. ссылка",
     },
     "en": {
@@ -263,8 +241,8 @@ BUTTON_TEXTS = {
         "memland": "Memelandia🦄",
         "gold_visa": "💳 Gold VISA Dubai",
         "buy_tickets": "Buy tickets 🎫",
-        "my_tickets": "My tickets",
         "leaderboard": "🏆",
+        "referrals": "Referrals",
         "ref_link": "Ref. link",
     },
     "uk": {
@@ -275,8 +253,8 @@ BUTTON_TEXTS = {
         "memland": "Мемляндія🦄",
         "gold_visa": "💳 Gold VISA Dubai",
         "buy_tickets": "Купити квитки 🎫",
-        "my_tickets": "Мої квитки",
         "leaderboard": "🏆",
+        "referrals": "Реферали",
         "ref_link": "Реф. посилання",
     },
 }
@@ -294,8 +272,8 @@ def footer_buttons(lang: str) -> ReplyKeyboardMarkup:
         [KeyboardButton(t["notify"])],
         [KeyboardButton(t["wallet"])],
         [KeyboardButton(t["memland"]), KeyboardButton(t["gold_visa"])],
-        [KeyboardButton(t["buy_tickets"])],
-        [KeyboardButton(t["my_tickets"]), KeyboardButton(t["leaderboard"]), KeyboardButton(t["ref_link"])],
+        [KeyboardButton(t["buy_tickets"]), KeyboardButton(t["leaderboard"])],
+        [KeyboardButton(t["referrals"]), KeyboardButton(t["ref_link"])],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
@@ -1091,14 +1069,24 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
 
         save_invoice(invoice_id, user_id, tickets, amount_ton, status)
 
-        slogan = text_ticket_slogan_button(lang)
+        # промо-фраза под кнопкой
+        if lang == "en":
+            promo = "Want to be on the leaderboard? Buy a ticket 🙂"
+        elif lang == "uk":
+            promo = "Хочеш у лідерборд? Купи квиток 🙂"
+        else:
+            promo = "Хочешь в лидерборд? Купи тикет 🙂"
+
+        stats = get_user_ticket_stats(user_id)
 
         text_invoice = (
             "Счёт создан ✅\n\n"
             f"Сумма: {amount_ton:.2f} TON\n"
             f"Тикетов: {tickets}\n\n"
+            f"{promo}\n\n"
             "После оплаты нажми «Проверить оплату».\n\n"
-            f"{slogan}"
+            f"Твои тикеты сейчас: {stats['tickets']}\n"
+            f"Всего куплено: {stats['total_ton']:.2f} TON"
         )
 
         kb = InlineKeyboardMarkup(
@@ -1115,12 +1103,35 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text(text_invoice, reply_markup=kb)
         return
 
-    # Мои тикеты
-    if text == t["my_tickets"]:
-        stats = get_user_ticket_stats(user_id)
-        await update.message.reply_text(
-            f"Твои тикеты: {stats['tickets']}\nВсего куплено: {stats['total_ton']:.2f} TON"
-        )
+    # Рефералы
+    if text == t["referrals"]:
+        me = await context.bot.get_me()
+        username = me.username
+        ref_url = f"https://t.me/{username}?start={user_id}"
+
+        if lang == "en":
+            msg = (
+                "Referrals:\n"
+                "— Invite friends with your personal link.\n"
+                "— In future versions, referral stats will appear here.\n\n"
+                f"Your link:\n{ref_url}"
+            )
+        elif lang == "uk":
+            msg = (
+                "Реферали:\n"
+                "— Запрошуй друзів своєю реферальною лінкою.\n"
+                "— У наступних версіях тут зʼявиться статистика.\n\n"
+                f"Твоя лінка:\n{ref_url}"
+            )
+        else:
+            msg = (
+                "Рефералы:\n"
+                "— Приглашай друзей своей реферальной ссылкой.\n"
+                "— В следующих версиях здесь появится статистика.\n\n"
+                f"Твоя ссылка:\n{ref_url}"
+            )
+
+        await update.message.reply_text(msg)
         return
 
     # Лидерборд 🏆
@@ -1171,6 +1182,7 @@ async def chart_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def my_tickets_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # команда остаётся, хотя кнопки больше нет
     user_id = update.effective_user.id
     stats = get_user_ticket_stats(user_id)
     await update.message.reply_text(
@@ -1180,8 +1192,7 @@ async def my_tickets_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def buy_tickets_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # просто продублируем поведение кнопки
-    fake_update = update
-    await footer_buttons_handler(fake_update, context)
+    await footer_buttons_handler(update, context)
 
 
 async def ref_link_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1201,7 +1212,7 @@ async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = ["🏆 Лидерборд по тикетам:", ""]
     current_user_id = update.effective_user.id if update.effective_user else None
-    lang = get_user_language(current_user_id) if current_user_id else "ru"
+    lang = get_user_language(current_user_id) if current_user_id is not None else "ru"
 
     for i, row in enumerate(lb, start=1):
         uid = row["user_id"]
@@ -1239,8 +1250,15 @@ async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     # слоган внизу
+    if lang == "en":
+        tagline = "Want to be here? Buy a ticket 🎫"
+    elif lang == "uk":
+        tagline = "Хочеш бути тут? Купи квиток 🎫"
+    else:
+        tagline = "Хочешь сюда? Купи тикет 🎫"
+
     lines.append("")
-    lines.append(text_ticket_slogan_top(lang))
+    lines.append(tagline)
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
