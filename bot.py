@@ -54,10 +54,6 @@ MEMELANDIA_API_URL = "https://memelandia.okhlopkov.com/api/leaderboard"
 
 CRYPTOPAY_API_URL = "https://pay.crypt.bot/api/"
 
-# ------------------ Gold VISA URL ------------------
-
-GOLD_VISA_URL = "https://t.me/teledevrobot/visa"
-
 # ------------------ ЯЗЫК ------------------
 
 user_lang: dict[int, str] = {}  # user_id -> 'ru' | 'en' | 'uk'
@@ -227,7 +223,6 @@ BUTTON_TEXTS = {
         "wallet": "Кошелёк",
         "referrals": "Рефералы",
         "memland": "Мемляндия🦄",
-        "gold_visa": "💳 Gold VISA Dubai",
         "buy_tickets": "Купить тикеты 🎫",
         "leaderboard": "🏆",
     },
@@ -237,7 +232,6 @@ BUTTON_TEXTS = {
         "wallet": "Wallet",
         "referrals": "Referrals",
         "memland": "Memelandia🦄",
-        "gold_visa": "💳 Gold VISA Dubai",
         "buy_tickets": "Buy tickets 🎫",
         "leaderboard": "🏆",
     },
@@ -247,7 +241,6 @@ BUTTON_TEXTS = {
         "wallet": "Гаманець",
         "referrals": "Реферали",
         "memland": "Мемляндія🦄",
-        "gold_visa": "💳 Gold VISA Dubai",
         "buy_tickets": "Купити квитки 🎫",
         "leaderboard": "🏆",
     },
@@ -265,7 +258,7 @@ def footer_buttons(lang: str) -> ReplyKeyboardMarkup:
         [KeyboardButton(t["notify"])],
         [KeyboardButton(t["wallet"])],
         [KeyboardButton(t["referrals"])],
-        [KeyboardButton(t["memland"]), KeyboardButton(t["gold_visa"])],
+        [KeyboardButton(t["memland"])],
         [KeyboardButton(t["buy_tickets"]), KeyboardButton(t["leaderboard"])],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -1076,21 +1069,6 @@ async def footer_buttons_handler(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_photo(img, caption="Top-5 Memelandia — 24h %")
         except Exception as e:
             print("Memelandia chart error:", e)
-        return
-
-    # Gold VISA Dubai
-    if text == t["gold_visa"]:
-        if lang == "en":
-            msg = "Apply for Gold VISA Dubai:"
-        elif lang == "uk":
-            msg = "Оформити Gold VISA Dubai можна тут:"
-        else:
-            msg = "Оформить Gold VISA Dubai можно здесь:"
-
-        kb = InlineKeyboardMarkup(
-            [[InlineKeyboardButton("💳 Gold VISA Dubai", url=GOLD_VISA_URL)]]
-        )
-        await update.message.reply_text(msg, reply_markup=kb, disable_web_page_preview=True)
         return
 
     # Купить тикеты
